@@ -1,0 +1,52 @@
+name: munin
+
+services:
+  munin_web:
+    build: .
+    image: munin_web
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file: .env
+    environment:
+      HOME: /tmp
+      DATABASE_URL: postgres://munin:${POSTGRES_PASSWORD}@munin_db:5432/munin
+      VISION_URL: http://munin_vision:8100
+      VAULT_PATH: /vault
+      PORT: 4000
+      PHX_SERVER: "true"
+      PHX_HOST: munin.nied.cc
+    volumes:
+      - /mnt/munin-vault:/vault
+    command: sh -c "/app/bin/munin eval \"Munin.Release.migrate\" && /app/bin/server"
+    networks:
+      - default
+      - web
+    depends_on:
+      - munin_db
+      - munin_vision
+
+  munin_db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: munin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: munin
+    volumes:
+      - munin_pgdata:/var/lib/postgresql/data
+
+  munin_vision:
+    build: ./vision
+    image: munin_vision
+    restart: unless-stopped
+    environment:
+      VAULT_PATH: /vault
+    volumes:
+      - /mnt/munin-vault:/vault:ro
+
+networks:
+  web:
+    external: true
+
+volumes:
+  munin_pgdata:

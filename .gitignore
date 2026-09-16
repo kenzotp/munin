@@ -8,3 +8,12 @@ __pycache__/
 venv/
 data/
 docs/local/
+
+# Elixir / Phoenix
+deps/
+_build/
+priv/static/assets/
+priv/static/cache/
+cover/
+test/tmp/
+.elixir_ls/
