@@ -36,7 +36,7 @@ inbound ZUGFeRD/XRechnung parser → booking proposals, outgoing-invoice tracker
 ## P6 — and beyond
 Ask-the-vault chat over your structured data; barcode separator-sheet splitting
 and archive serial numbers; whole-file-optimizer hooks via the companion
-project hugin; public API + webhooks; insurance overlap detector; vehicle and
+project Hugin; public API + webhooks; insurance overlap detector; vehicle and
 travel files.
 
 The full design rationale and research backing these phases lives in

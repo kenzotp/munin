@@ -1,4 +1,4 @@
-# munin
+# Munin
 
 The vault that remembers. A self-hosted **document & finance brain**: every
 invoice, receipt and contract — from mail, scanners, or your PC's folders —
@@ -7,7 +7,7 @@ accounts. Built for German freelancers (EÜR, USt, DATEV export) and useful to
 anyone who wants their paperwork organized and their spending understood.
 
 Named after Munin, Odin's raven of memory. Its companion project
-[**hugin**](https://github.com/kenzotp/hugin) — the raven of thought — is the
+[**Hugin**](https://github.com/kenzotp/hugin) — the raven of thought — is the
 PC-side file organizer that sweeps folders and hands finance documents over.
 
 ## What it does

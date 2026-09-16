@@ -1,4 +1,4 @@
-# RESEARCH — what AKTEN steals from, and why (verified Sept 2026)
+# RESEARCH — the design research behind Munin (verified Sept 2026)
 
 Conclusions from two research sweeps (OSS repos; German banking/tax) plus local
 infrastructure checks. Sources were live links at research time; the ranked
@@ -63,7 +63,7 @@ schema only, no dependency. No better-maintained OSS competitor exists.
 Excel, PowerPoint, **Outlook .msg**, EPUB, HTML, CSV/JSON/XML, ZIP → Markdown.
 PDF = embedded text ONLY (no scan OCR without Azure); images EXIF+OCR; audio
 transcription. Lightweight core, opt-in extras, CLI + library (+ MCP server).
-**Role in AKTEN:** the universal cheap rung for every non-PDF or text-layer
+**Role in Munin:** the universal cheap rung for every non-PDF or text-layer
 file — this is what makes the whole-PC file optimizer classify everything, not
 just PDFs. Security: use `convert_local()`/`convert_stream()` (their documented
 safe path for untrusted input), inside the sidecar container.
@@ -136,7 +136,7 @@ open-webui supports a docling RAG engine but has it disabled — no conflicts.
 - Hub: 71 GB free; 35 containers; **no existing document-management stack**;
   `ollama-ha` HAProxy (port 11434) load-balances LAN Ollama hosts:
   192.168.0.253 "eth" (llama3.2:3b + **bge-m3** embeddings), 192.168.0.122
-  (this PC — the vision model). AKTEN reaches both through ollama-ha, exactly
+  (this PC — the vision model). Munin reaches both through ollama-ha, exactly
   like the mail stack does.
 - markitdown/docling: absent everywhere — fresh install in the sidecar.
 
