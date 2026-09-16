@@ -125,6 +125,6 @@ if config_env() == :prod do
     engine: Oban.Engines.Basic,
     repo: Munin.Repo,
     queues: [default: 5, reading: 2],
-    plugins: [{Oban.Plugins.Pruner, max_age: 300}],
+    plugins: [{Oban.Plugins.Pruner, max_age: 300}, {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(2)}],
     name: Oban
 end
