@@ -31,12 +31,12 @@ PC-side file organizer that sweeps folders and hands finance documents over.
 
 ## Status
 
-Pre-alpha — design and research phase. See
+**P1+P2 LIVE (2026-09-16/17)** — document vault (SHA-256 dedupe), classification, invoice money extraction with checksum gate, reminder pipeline, review UI. Design history: see
 [ROADMAP.md](ROADMAP.md) and
 [docs/RESEARCH.md](docs/RESEARCH.md) for the architecture and the
 open-source work this design draws from.
 
-## Architecture (planned)
+## Architecture
 
 - **Phoenix LiveView** app (Elixir) — snappy server-rendered UI, Oban workers
   for the document/bank pipelines, Postgres via Ecto, multi-user from day one.
