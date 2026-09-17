@@ -44,6 +44,10 @@ defmodule MuninWeb.Router do
       live "/documents", DocumentsLive
       live "/documents/:id", DocumentLive
       live "/reminders", RemindersLive
+      live "/money", MoneyLive
+      live "/money/tx", TransactionsLive
+      live "/money/import", ImportLive
+      live "/tax", TaxLive
       live "/users/settings", UserLive.Settings, :edit
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
     end
