@@ -51,6 +51,13 @@ defmodule Munin.Understanding do
               meta
             end
 
+          meta =
+            Map.put(meta, "reminders", %{
+              "due_date" => verdict["due_date"] || "",
+              "warranty_months" => verdict["warranty_months"] || 0,
+              "notice_days" => verdict["notice_days"] || 0
+            })
+
           doc
           |> Munin.Documents.Document.changeset(%{
             title: verdict["title"] || doc.title,
@@ -77,9 +84,12 @@ defmodule Munin.Understanding do
         scope: %{type: "string", enum: ["business", "private"]},
         vendor: %{type: "string"},
         title: %{type: "string"},
-        summary: %{type: "string"}
+        summary: %{type: "string"},
+        due_date: %{type: "string"},
+        warranty_months: %{type: "integer"},
+        notice_days: %{type: "integer"}
       },
-      required: [:doc_type, :scope, :vendor, :title, :summary],
+      required: [:doc_type, :scope, :vendor, :title, :summary, :due_date, :warranty_months, :notice_days],
       additionalProperties: false
     }
 
@@ -88,6 +98,10 @@ defmodule Munin.Understanding do
     ticket | statement | other. scope: business if it concerns the owner's own
     company work, private otherwise. vendor: the issuing company/person.
     title: a short human title (5-10 words). summary: one sentence.
+    Reminders: due_date = the payment deadline shown on an invoice/receipt as
+    YYYY-MM-DD ("" if none). warranty_months = warranty length in months for
+    receipts (0 if none). notice_days = the Kündigungsfrist of a contract in
+    days (0 if none or unknown).
     """
 
     call(doc, prompt, schema, 500)
