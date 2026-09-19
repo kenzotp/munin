@@ -127,4 +127,19 @@ if config_env() == :prod do
     queues: [default: 5, reading: 2],
     plugins: [{Oban.Plugins.Pruner, max_age: 300}, {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(2)}],
     name: Oban
+
+  # ── Jev (TypeSafe System One) invoice-match second opinion ─────────────────
+  # Empty TYPESAFE_API_KEY = Money.auto_match_all! keeps its legacy behaviour.
+  # When set, a blessed candidate auto-matches, a doubted one stays in the
+  # /money/tx review queue. See lib/munin/jev.ex.
+  jev_threshold =
+    case Float.parse(System.get_env("JEV_MATCH_THRESHOLD") || "0.85") do
+      {f, _} -> f
+      :error -> 0.85
+    end
+
+  config :munin,
+    typesafe_api_key: System.get_env("TYPESAFE_API_KEY", ""),
+    jev_model: System.get_env("TYPESAFE_MODEL", "jev-latest"),
+    jev_match_threshold: jev_threshold
 end

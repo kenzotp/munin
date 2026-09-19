@@ -321,11 +321,39 @@ defmodule Munin.Money do
     |> Enum.reduce(0, fn doc, acc ->
       case candidates_for(doc, 1) do
         [{line, s}] when s >= 1 ->
-          confirm!(doc, line)
-          acc + 1
+          case Munin.Jev.invoice_matches_line?(doc, line) do
+            {:ok, n} ->
+              if n >= Munin.Jev.auto_threshold() do
+                # Jev blesses the pair: auto-match, keeping its confidence.
+                doc
+                |> note_jev!(%{"noul" => Float.round(n, 3), "matched" => true})
+                |> then(&confirm!(&1, line))
+                acc + 1
+              else
+                # Jev doubts it: leave the pair in the /money/tx review queue.
+                note_jev!(doc, %{"noul" => Float.round(n, 3), "matched" => false, "line_id" => line.id})
+                acc
+              end
+
+            # Jev disabled (no key) or unreachable: legacy behaviour decides.
+            _ ->
+              confirm!(doc, line)
+              acc + 1
+          end
+
         _ -> acc
       end
     end)
+  end
+
+  # Records the Jev second opinion under meta["jev"] and returns the updated
+  # struct, so a following confirm!/2 merges its matched flags on top.
+  defp note_jev!(%Document{} = doc, jev) do
+    meta = Map.put(doc.meta || %{}, "jev", jev)
+
+    doc
+    |> Ecto.Changeset.change(meta: meta)
+    |> Repo.update!()
   end
 
   def confirm!(%Document{} = doc, %Transaction{} = line) do
