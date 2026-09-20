@@ -133,9 +133,9 @@ if config_env() == :prod do
   # When set, a blessed candidate auto-matches, a doubted one stays in the
   # /money/tx review queue. See lib/munin/jev.ex.
   jev_threshold =
-    case Float.parse(System.get_env("JEV_MATCH_THRESHOLD") || "0.85") do
+    case Float.parse(System.get_env("JEV_MATCH_THRESHOLD") || "0.6") do
       {f, _} -> f
-      :error -> 0.85
+      :error -> 0.6
     end
 
   config :munin,

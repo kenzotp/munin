@@ -15,7 +15,7 @@ defmodule Munin.Jev do
   def api_key, do: Application.get_env(:munin, :typesafe_api_key, "")
   def model, do: Application.get_env(:munin, :jev_model, "jev-latest")
   @doc "Noul above which an auto-match may proceed without a human."
-  def auto_threshold, do: Application.get_env(:munin, :jev_match_threshold, 0.85)
+  def auto_threshold, do: Application.get_env(:munin, :jev_match_threshold, 0.75)
 
   def enabled?, do: String.trim(api_key() || "") != ""
 
@@ -63,35 +63,26 @@ defmodule Munin.Jev do
   end
 
   defp private?(addr) do
-    case :inet.ntoa(addr) do
-      {:ok, text} ->
-        s = to_string(text)
-        String.starts_with?(s, "10.") or String.starts_with?(s, "127.") or
-          String.starts_with?(s, "192.168.") or String.starts_with?(s, "169.254.") or
-          s == "0.0.0.0" or String.starts_with?(s, "172.16.") or
-          Enum.any?(17..31, fn o -> String.starts_with?(s, "172.#{o}.") end)
+    # inet:ntoa/1 returns a bare charlist (no {:ok, _} wrapper)
+    s = to_string(:inet.ntoa(addr))
 
-      _ ->
-        true
-    end
+    String.starts_with?(s, "10.") or String.starts_with?(s, "127.") or
+      String.starts_with?(s, "192.168.") or String.starts_with?(s, "169.254.") or
+      s == "0.0.0.0" or
+      Enum.any?(16..31, fn o -> String.starts_with?(s, "172.#{o}.") end)
   end
 
   defp state(doc, line) do
     inv = get_in(doc.meta, ["invoice"]) || %{}
 
+    # Deliberately minimal: no amounts or invoice numbers. The deterministic
+    # engine already verified the amount exactly; Jev's own docs say it can't
+    # do math and that contradictory-looking numbers in the state drag its
+    # answers. Vendor identity is the only judgment asked of it.
     """
-    Does this bank transaction correspond to the payment of this invoice?
-
-    Invoice:
-    vendor: #{inv["vendor"]}
-    number: #{inv["number"]}
-    date: #{inv["date"]}
-    total gross: #{inv["total_gross"]}
+    Invoice vendor: #{inv["vendor"]}
 
     Bank transaction:
-    booked at: #{line.booked_at}
-    amount cents: #{line.amount_cents}
-    currency: #{line.currency}
     payer: #{line.payer}
     description: #{line.description}
     """
@@ -106,14 +97,15 @@ defmodule Munin.Jev do
           "matches" => %{
             "type" => "noul",
             "instructions" =>
-              "The bank transaction is the payment of this exact invoice: same vendor, the amount equals the invoice total, and the date is consistent."
+              "The invoice vendor and the payer of the bank transaction are the same company, so the transaction plausibly books that invoice's payment."
           }
         }
       })
 
     headers = [
-      {"authorization", "Bearer " <> String.trim(api_key())},
-      {"content-type", "application/json"}
+      # httpc wants charlists, not binaries
+      {~c"authorization", ~c"Bearer " ++ String.to_charlist(String.trim(api_key()))},
+      {~c"content-type", ~c"application/json"}
     ]
 
     request = {String.to_charlist(@url), headers, ~c"application/json", body}
