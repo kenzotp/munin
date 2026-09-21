@@ -51,12 +51,25 @@ defmodule Munin.Money.Fints do
           Logger.info("[fints] imported #{imported} (#{dups} duplicates)")
           {:ok, {imported, dups}}
 
-        {:ok, %{status: status, body: %{"error" => err} = body}} ->
+        {:ok, %{status: status, body: body}} ->
+          # FastAPI wraps HTTPException payloads under "detail"
+          detail = body["detail"] || %{}
+          err = (is_map(detail) && (detail["error"] || detail["message"])) || inspect(body)
+          tan = is_map(detail) && detail["tan_required"] == true
+
           msg =
-            if body["tan_required"] do
-              "The bank wants a TAN approval (S-pushTAN) — interactive flow not wired yet. " <> err
-            else
-              err
+            cond do
+              tan ->
+                "The bank wants a TAN approval (S-pushTAN) — interactive flow not wired yet. " <>
+                  err
+
+              String.contains?(err, "could not fetch BPD") ->
+                "The bank does not accept our product registration ID yet — the DK database " <>
+                  "propagates new IDs over several working days. Retry in a few days " <>
+                  "(or check BLZ/URL)."
+
+              true ->
+                err
             end
 
           Logger.warning("[fints] HTTP #{status}: #{msg}")
@@ -64,7 +77,7 @@ defmodule Munin.Money.Fints do
 
         other ->
           Logger.warning("[fints] unexpected: #{inspect(other)}")
-          {:error, "sidecar unreachable or unexpected response"}
+          {:error, "sidecar unreachable"}
       end
     else
       {:error, "FinTS not configured — missing: " <> Enum.join(missing_keys(), ", ")}
