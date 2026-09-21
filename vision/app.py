@@ -90,3 +90,74 @@ def render(body: PathIn):
         pages.append({"n": n + 1, "jpeg_base64": base64.b64encode(jpeg).decode()})
     doc.close()
     return {"pages": pages}
+
+
+# ---------------------------------------------------------------- FinTS (P3)
+# Read-only statement fetch. Credentials arrive per-request from the web app's
+# env; nothing is logged or persisted here. The DK product registration ID
+# must never be shipped in a public repo — each self-hoster registers their own.
+
+class FinTSIn(BaseModel):
+    blz: str
+    url: str
+    login: str
+    pin: str
+    product_id: str
+    start: str
+    end: str | None = None
+
+
+@app.post("/fints/transactions")
+def fints_transactions(body: FinTSIn):
+    import datetime as dt
+
+    from fints.client import FinTS3PinTanClient
+
+    start = dt.date.fromisoformat(body.start)
+    end = dt.date.fromisoformat(body.end) if body.end else dt.date.today()
+
+    def tan_err(e: Exception) -> bool:
+        msg = str(e) or ""
+        return "tan" in msg.lower() or "3920" in msg or "NeedTAN" in e.__class__.__name__
+
+    try:
+        client = FinTS3PinTanClient(
+            body.blz, body.login, body.pin, body.url, product_id=body.product_id
+        )
+        accounts = client.get_sepa_accounts()
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": str(e) or e.__class__.__name__, "tan_required": tan_err(e)},
+        )
+
+    rows = []
+    per_account = []
+    for acc in accounts:
+        per_account.append(f"{getattr(acc, 'iban', None) or getattr(acc, 'accountnumber', '?')} ({acc.type})")
+        try:
+            statement = client.get_statement(full_account_ref=acc, start_date=start, end_date=end)
+        except Exception as e:
+            if tan_err(e):
+                raise HTTPException(status_code=502, detail={"error": str(e) or e.__class__.__name__, "tan_required": True})
+            continue  # skip an account that won't play; fetch the rest
+
+        for tx in statement:
+            data = tx.data
+            amount = data.get("amount")
+            cents = int(round(float(amount.value) * 100)) if amount is not None else 0
+            purpose = " ".join(data.get("purpose") or [])
+            ext = data.get("id") or data.get("end_to_endreference") or None
+            iban = getattr(acc, "iban", None)
+            rows.append(
+                {
+                    "booked_at": str(data.get("date") or data.get("entry_date") or ""),
+                    "amount_cents": cents,
+                    "payer": data.get("applicant_name") or data.get("posting_text") or "",
+                    "description": purpose,
+                    "iban": iban,
+                    "external_id": f"{iban}:{ext}" if (iban and ext) else None,
+                }
+            )
+
+    return {"rows": rows, "accounts": per_account}

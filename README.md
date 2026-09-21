@@ -23,6 +23,11 @@ PC-side file organizer that sweeps folders and hands finance documents over.
   and matched to documents by exact amount, date window and IBAN/creditor
   tokens — with a ranked confirmation UI. Transfers between your own accounts
   never double-count.
+- **Works today without bank APIs**: paste CSV exports (German bank formats
+  parse as-is) or use the built-in simulator. Real FinTS sync is read-only
+  and activates with your own free DK product registration (fints.org) —
+  set `FINTS_*` env vars; registration IDs are personal and never shipped in
+  this repo.
 - **German tax pack**: categories carry VAT rates + EÜR lines, live EÜR,
   USt-Voranmeldung worksheet, DATEV CSV + receipt-image export, inbound
   ZUGFeRD/XRechnung e-invoice parsing.

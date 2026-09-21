@@ -14,7 +14,11 @@ defmodule MuninWeb.ImportLive do
        csv: "",
        account: "Sparkasse",
        result: nil,
-       simulated: Money.simulated?()
+       simulated: Money.simulated?(),
+       fints_configured: Munin.Money.Fints.configured?(),
+       fints_missing: Munin.Money.Fints.missing_keys(),
+       fints_days: "90",
+       fints_busy: false
      )}
   end
 
@@ -53,6 +57,30 @@ defmodule MuninWeb.ImportLive do
     {:noreply, socket |> assign(simulated: false) |> put_flash(:info, "Deleted #{n} simulated lines (and re-checked matches are gone with them).")}
   end
 
+  def handle_event("fints", %{"days" => days}, socket) do
+    days =
+      case Integer.parse(days) do
+        {n, ""} when n in 1..720 -> n
+        _ -> 90
+      end
+
+    socket = assign(socket, fints_busy: true)
+
+    case Munin.Money.Fints.fetch(Date.add(Date.utc_today(), -days)) do
+      {:ok, {imported, dups}} ->
+        {:noreply,
+         socket
+         |> assign(fints_busy: false)
+         |> put_flash(:info, "FinTS: #{imported} lines imported, #{dups} duplicates skipped.")}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> assign(fints_busy: false)
+         |> put_flash(:error, "FinTS: " <> reason)}
+    end
+  end
+
   defp reload_flag(socket), do: assign(socket, simulated: Money.simulated?())
 
   @impl true
@@ -68,6 +96,30 @@ defmodule MuninWeb.ImportLive do
       </div>
 
       <.flash kind={:info} title="" flash={@flash} />
+      <.flash kind={:error} title="" flash={@flash} />
+
+      <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 mb-6">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">Bank sync · FinTS</h2>
+        <%= if @fints_configured do %>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+            Read-only statement fetch from your bank (Sparkasse). First fetch may need a TAN approval in your banking app — the interactive flow is the next piece.
+          </p>
+          <form phx-submit="fints" class="flex items-center gap-2">
+            <input type="number" name="days" min="1" max="720" value={@fints_days}
+              class="w-24 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm" />
+            <span class="text-sm text-zinc-500">days back</span>
+            <button type="submit" disabled={@fints_busy}
+              class="rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold px-4 py-2 text-sm">
+              Fetch statements
+            </button>
+          </form>
+        <% else %>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400">
+            Waiting for credentials. Set <code class="text-zinc-400"><%= Enum.join(@fints_missing, ", ") %></code> in .env
+            (the DK product ID is already there) and rebuild. Get your own free registration at fints.org — never ship one in the repo.
+          </p>
+        <% end %>
+      </div>
 
       <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 mb-6">
         <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">Demo data</h2>
