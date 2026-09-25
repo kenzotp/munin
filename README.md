@@ -19,6 +19,13 @@ PC-side file organizer that sweeps folders and hands finance documents over.
   arithmetic checksum (net + VAT = total) — mismatches go to a review queue,
   never silently stored. Confirm an LLM extraction once, and it becomes a
   deterministic template for that vendor.
+- **Local-first inference, always**: OCR and classification/extraction try a
+  local Ollama model first — set `LOCAL_LLM_URL` (e.g. `http://host:11434`)
+  and, if you don't want the default, `LOCAL_LLM_MODEL`. Cloud (OpenRouter) is
+  only used as a fallback, and only when you opt in with `CLOUD_FALLBACK=true`
+  — with it off (the default), no document ever leaves the machine, which
+  matters most for tax documents. If the local model is unreachable and cloud
+  is off, the document is simply retried later, never marked failed.
 - **Matches money to paper**: bank statements (FinTS/PSD2) are deduplicated
   and matched to documents by exact amount, date window and IBAN/creditor
   tokens — with a ranked confirmation UI. Transfers between your own accounts

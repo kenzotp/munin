@@ -52,16 +52,6 @@ defmodule MuninWeb.RemindersLive do
   defp chip_class(:info), do: "rounded-full px-3 py-1 text-xs font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
   defp chip_class(_), do: "rounded-full px-3 py-1 text-xs font-medium bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
 
-  defp chip_text(%{urgency: :info}, _today), do: "notice"
-  defp chip_text(%{urgency: u, date: d}, today) do
-    days = Date.diff(d, today)
-    case u do
-      :overdue -> "#{-days} days overdue"
-      :soon -> "in #{days} days"
-      _ -> "in #{days} days"
-    end
-  end
-
   defp entries(docs) do
     today = Date.utc_today()
     docs
@@ -148,16 +138,12 @@ defmodule MuninWeb.RemindersLive do
 
   defp chip_text(%{urgency: :info}, _today), do: "notice"
 
-  defp chip_text(%{urgency: urgency, date: date}, today) do
+  defp chip_text(%{date: date}, today) do
     days = Date.diff(date, today)
     cond do
       days < 0 -> "#{abs(days)}d overdue"
       days == 0 -> "today"
-      days <= 14 -> "in #{days}d"
       true -> "in #{days}d"
-    end
-    |> case do
-      t -> t
     end
   end
 end

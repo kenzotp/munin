@@ -1,22 +1,30 @@
 defmodule Munin.Reading do
   @moduledoc """
-  The reading ladder, P1 edition. Order is cheapest-first and deterministic
-  before model:
+  The reading ladder, P1+P3 edition. Order is cheapest-first and deterministic
+  before model, local-first before cloud:
 
     1. Sidecar /extract — embedded text layer (pypdf) or office/html/csv text
        (markitdown). If that yields real text, DONE — no model call at all.
     2. Sidecar /render — PDF pages → capped JPEGs (pymupdf).
-    3. OpenRouter VLM (OCR_MODEL env) over the page images, one call per page,
-       collected into the body text.
+    3. OCR over the page images: a local Ollama model (LOCAL_LLM_URL,
+       LOCAL_LLM_MODEL) first, always. OpenRouter (OCR_MODELS) is only used
+       when CLOUD_FALLBACK=true — with it off (the default), no page image
+       ever leaves the machine.
 
   Originals are NEVER written to — results land in Document.body_text.
-  Failures downgrade status instead of raising: "pending" (sidecar asleep —
-  retried later), "failed" (reading genuinely broke), "empty" (nothing to
-  read — a blank scan).
+  Failures downgrade status instead of raising: "pending" (sidecar asleep, or
+  the local model unreachable with cloud off — retried later), "failed"
+  (reading genuinely broke), "empty" (nothing to read — a blank scan).
   """
   require Logger
 
   @vision_timeout 120_000
+  # A cold Ollama load (model swap) costs real time on the owner's host — a
+  # live smoke test against gemma4:26b-a4b-it-qat measured ~293s just to load
+  # before the first token, well past the "40-45s" ballpark, so this gives
+  # real headroom (>= 180s per spec, wider in practice) before calling the
+  # request a failure rather than a slow-but-fine cold start.
+  @local_timeout 360_000
   @min_text_chars 200
 
   def read(%Munin.Documents.Document{} = doc) do
@@ -28,6 +36,10 @@ defmodule Munin.Reading do
         case ocr(doc) do
           {:ok, text} -> %{text: text, status: "done"}
           {:empty, _} -> %{text: nil, status: "empty"}
+          {:retry, reason} ->
+            Logger.warning("[reading] local model unavailable for #{doc.id}, retrying later: #{inspect(reason)}")
+            %{text: nil, status: "pending"}
+
           {:error, reason} ->
             Logger.warning("[reading] OCR failed for #{doc.id}: #{inspect(reason)}")
             %{text: nil, status: "failed"}
@@ -87,8 +99,79 @@ defmodule Munin.Reading do
     end
   end
 
+  # -------------------------------------------------------------- providers
+
+  defp local_llm_url, do: System.get_env("LOCAL_LLM_URL")
+  defp local_llm_model, do: System.get_env("LOCAL_LLM_MODEL", "gemma4:26b-a4b-it-qat")
+  defp cloud_fallback?, do: System.get_env("CLOUD_FALLBACK", "false") in ~w(true 1)
+
+  defp ocr_page(jpeg_base64) do
+    local_llm_url()
+    |> local_ocr(jpeg_base64)
+    |> resolve_provider(cloud_fallback?(), fn -> cloud_ocr_page(jpeg_base64) end)
+  end
+
+  # Given the local provider's outcome, decides whether to fall back to cloud
+  # (only when `cloud_fallback?` is true) or ask for a retry. Pure aside from
+  # the `cloud_fun` callback — kept separate from the HTTP calls, and public,
+  # so provider selection is unit-testable without a network.
+  @doc false
+  def resolve_provider({:ok, _} = ok, _cloud_fallback?, _cloud_fun), do: ok
+
+  def resolve_provider({:unreachable, reason}, cloud_fallback?, cloud_fun) do
+    if cloud_fallback?, do: cloud_fun.(), else: {:retry, reason}
+  end
+
+  def resolve_provider({:error, _reason} = error, cloud_fallback?, cloud_fun) do
+    if cloud_fallback? do
+      case cloud_fun.() do
+        {:ok, _} = ok -> ok
+        _ -> error
+      end
+    else
+      error
+    end
+  end
+
+  # Ollama's native /api/chat, non-streaming, thinking off (gemma otherwise
+  # answers inside the thinking field instead of content).
+  defp local_ocr(nil, _jpeg_base64), do: {:unreachable, :no_local_provider}
+
+  defp local_ocr(url, jpeg_base64) do
+    body = %{
+      model: local_llm_model(),
+      stream: false,
+      think: false,
+      options: %{temperature: 0},
+      messages: [
+        %{
+          role: "user",
+          content:
+            "Transcribe ALL text on this document page exactly as written, preserving " <>
+              "layout order. Output ONLY the transcription — no commentary, no markdown.",
+          images: [jpeg_base64]
+        }
+      ]
+    }
+
+    case Req.post(Path.join(url, "/api/chat"), json: body, receive_timeout: @local_timeout) do
+      {:ok, %{status: 200, body: %{"message" => %{"content" => text}}}} ->
+        {:ok, String.trim(text || "")}
+
+      {:ok, %{status: status, body: body}} when status >= 500 ->
+        {:unreachable, {:local_status, status, body}}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:local_status, status, body}}
+
+      {:error, reason} ->
+        {:unreachable, {:local_transport, reason}}
+    end
+  end
+
   # Ordered fallback chain (nied-mail's lesson: free slugs rot in days). The
-  # first entry is the primary; every entry must be vision-capable.
+  # first entry is the primary; every entry must be vision-capable. Only
+  # reached when CLOUD_FALLBACK=true.
   defp models do
     System.get_env(
       "OCR_MODELS",
@@ -99,7 +182,7 @@ defmodule Munin.Reading do
     |> Enum.reject(&(&1 == ""))
   end
 
-  defp ocr_page(jpeg_base64) do
+  defp cloud_ocr_page(jpeg_base64) do
     key = System.get_env("OPENROUTER_API_KEY", "")
     if key == "" do
       {:error, :no_openrouter_key}
@@ -108,7 +191,7 @@ defmodule Munin.Reading do
         models()
         |> Enum.reduce(:last_resort, fn
           model, acc when acc == :last_resort or elem(acc, 0) == :error ->
-            case ocr_page_with(model, key, jpeg_base64) do
+            case cloud_ocr_page_with(model, key, jpeg_base64) do
               {:ok, _} = ok -> ok
               error -> {:error, {model, error}}
             end
@@ -125,7 +208,7 @@ defmodule Munin.Reading do
     end
   end
 
-  defp ocr_page_with(model, key, jpeg_base64) do
+  defp cloud_ocr_page_with(model, key, jpeg_base64) do
     body = %{
       model: model,
       messages: [

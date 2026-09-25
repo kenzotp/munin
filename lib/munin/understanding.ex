@@ -6,15 +6,26 @@ defmodule Munin.Understanding do
 
   Classification and extraction are two separate strict-JSON model calls (the
   classifier's schema is small and reliable; the extractor's is money-precise).
-  Both run on an ordered OpenRouter model chain (CLASSIFY_MODELS env, free
-  slugs rot — nied-mail's lesson).
+  Both run local-first: a local Ollama model (LOCAL_LLM_URL, LOCAL_LLM_MODEL)
+  is tried first, always. An ordered OpenRouter model chain (CLASSIFY_MODELS
+  env, free slugs rot — nied-mail's lesson) is only used when
+  CLOUD_FALLBACK=true — with it off (the default, and the required setting
+  for tax documents), no document text ever leaves the machine.
 
   A failed checksum never blocks storage: the fields land with
-  review_needed=true and the reason, and the review UI takes it from there.
+  review_needed=true and the reason, and the review UI takes it from there —
+  at meta["invoice"]["review_needed"], read by the review views alongside the
+  top-level meta["review_needed"] used for classification failures.
   """
   require Logger
 
   @timeout 90_000
+  # A cold Ollama load (model swap) costs real time on the owner's host — a
+  # live smoke test against gemma4:26b-a4b-it-qat measured ~293s just to load
+  # before the first token, well past the "40-45s" ballpark, so this gives
+  # real headroom (>= 180s per spec, wider in practice) before calling the
+  # request a failure rather than a slow-but-fine cold start.
+  @local_timeout 360_000
   @doc_types ~w(invoice receipt contract letter ticket statement other)
 
   def models do
@@ -27,14 +38,23 @@ defmodule Munin.Understanding do
     |> Enum.reject(&(&1 == ""))
   end
 
-  @doc "Classify + extract for one document. Returns the updated Document."
+  @doc """
+  Classify + extract for one document. Returns `{:ok, doc}` with the updated
+  Document — including the case where classification or extraction failed
+  outright and got a review flag — or `{:retry, reason}` when the local model
+  was unreachable and cloud is off: nothing is written, the caller should
+  retry later rather than record a failure.
+  """
   def understand(%Munin.Documents.Document{} = doc) do
     if doc.body_text in [nil, ""] do
-      doc
+      {:ok, doc}
     else
       meta = doc.meta || %{}
 
       case classify(doc) do
+        {:retry, reason} ->
+          {:retry, reason}
+
         {:ok, verdict} ->
           meta =
             Map.merge(meta, %{
@@ -44,35 +64,52 @@ defmodule Munin.Understanding do
               "summary" => verdict["summary"]
             })
 
-          meta =
-            if verdict["doc_type"] in ["invoice", "receipt"] do
-              Map.put(meta, "invoice", extract_invoice(doc))
-            else
-              meta
-            end
+          case with_invoice(doc, verdict, meta) do
+            {:retry, reason} ->
+              {:retry, reason}
 
-          meta =
-            Map.put(meta, "reminders", %{
-              "due_date" => verdict["due_date"] || "",
-              "warranty_months" => verdict["warranty_months"] || 0,
-              "notice_days" => verdict["notice_days"] || 0
-            })
+            {:ok, meta} ->
+              doc =
+                doc
+                |> Munin.Documents.Document.changeset(%{
+                  title: verdict["title"] || doc.title,
+                  meta: meta
+                })
+                |> Munin.Repo.update!()
 
-          doc
-          |> Munin.Documents.Document.changeset(%{
-            title: verdict["title"] || doc.title,
-            meta: meta
-          })
-          |> Munin.Repo.update!()
+              {:ok, doc}
+          end
 
         {:error, reason} ->
           Logger.warning("[understand] classify failed for #{doc.id}: #{inspect(reason)}")
-          doc
-          |> Munin.Documents.Document.changeset(%{
-            meta: Map.put(meta, "review_needed", true) |> Map.put("review_reason", "classification failed")
-          })
-          |> Munin.Repo.update!()
+
+          doc =
+            doc
+            |> Munin.Documents.Document.changeset(%{
+              meta: Map.put(meta, "review_needed", true) |> Map.put("review_reason", "classification failed")
+            })
+            |> Munin.Repo.update!()
+
+          {:ok, doc}
       end
+    end
+  end
+
+  defp with_invoice(doc, verdict, meta) do
+    meta =
+      Map.put(meta, "reminders", %{
+        "due_date" => verdict["due_date"] || "",
+        "warranty_months" => verdict["warranty_months"] || 0,
+        "notice_days" => verdict["notice_days"] || 0
+      })
+
+    if verdict["doc_type"] in ["invoice", "receipt"] do
+      case extract_invoice(doc) do
+        {:retry, reason} -> {:retry, reason}
+        {:ok, invoice} -> {:ok, Map.put(meta, "invoice", invoice)}
+      end
+    else
+      {:ok, meta}
     end
   end
 
@@ -108,8 +145,10 @@ defmodule Munin.Understanding do
   end
 
   @doc """
-  Money extraction with the checksum gate. Returns the invoice map (never
-  raises): a checksum mismatch sets review_needed inside the map instead.
+  Money extraction with the checksum gate. Returns `{:ok, invoice_map}` — a
+  checksum mismatch or an outright extraction failure sets review_needed
+  inside the map instead of raising — or `{:retry, reason}` when the local
+  model was unreachable and cloud is off.
   """
   def extract_invoice(doc) do
     schema = %{
@@ -136,6 +175,9 @@ defmodule Munin.Understanding do
     """
 
     case call(doc, prompt, schema, 700) do
+      {:retry, reason} ->
+        {:retry, reason}
+
       {:ok, fields} ->
         total = fields["total_gross"] + 0.0
         vat = fields["vat_amount"] + 0.0
@@ -153,24 +195,52 @@ defmodule Munin.Understanding do
           "checksum_ok" => ok?
         }
 
-        if ok? do
-          invoice
-        else
-          Map.merge(invoice, %{
-            "review_needed" => true,
-            "review_reason" => "checksum failed: net + VAT ≠ total"
-          })
-        end
+        invoice =
+          if ok? do
+            invoice
+          else
+            Map.merge(invoice, %{
+              "review_needed" => true,
+              "review_reason" => "checksum failed: net + VAT ≠ total"
+            })
+          end
+
+        {:ok, invoice}
 
       {:error, reason} ->
-        %{"review_needed" => true, "review_reason" => "extraction failed: #{inspect(reason)}"}
+        {:ok, %{"review_needed" => true, "review_reason" => "extraction failed: #{inspect(reason)}"}}
+    end
+  end
+
+  # -------------------------------------------------------------- providers
+
+  defp local_llm_url, do: System.get_env("LOCAL_LLM_URL")
+  defp local_llm_model, do: System.get_env("LOCAL_LLM_MODEL", "gemma4:26b-a4b-it-qat")
+  defp cloud_fallback?, do: System.get_env("CLOUD_FALLBACK", "false") in ~w(true 1)
+
+  # Given the local provider's outcome, decides whether to fall back to cloud
+  # (only when `cloud_fallback?` is true) or ask for a retry. Pure aside from
+  # the `cloud_fun` callback — kept separate from the HTTP calls, and public,
+  # so provider selection is unit-testable without a network.
+  @doc false
+  def resolve_provider({:ok, _} = ok, _cloud_fallback?, _cloud_fun), do: ok
+
+  def resolve_provider({:unreachable, reason}, cloud_fallback?, cloud_fun) do
+    if cloud_fallback?, do: cloud_fun.(), else: {:retry, reason}
+  end
+
+  def resolve_provider({:error, _reason} = error, cloud_fallback?, cloud_fun) do
+    if cloud_fallback? do
+      case cloud_fun.() do
+        {:ok, _} = ok -> ok
+        _ -> error
+      end
+    else
+      error
     end
   end
 
   defp call(doc, prompt, schema, max_tokens) do
-    key = System.get_env("OPENROUTER_API_KEY", "")
-    if key == "", do: throw({:error, :no_openrouter_key})
-
     content =
       """
       Filename: #{doc.filename}
@@ -179,20 +249,64 @@ defmodule Munin.Understanding do
       #{String.slice(doc.body_text || "", 0, 6000)}
       """
 
-    last =
-      Enum.reduce(models(), {:error, :no_models}, fn model, acc ->
-        case call_model(model, key, content, schema, max_tokens) do
+    local_llm_url()
+    |> local_call(content, schema)
+    |> resolve_provider(cloud_fallback?(), fn -> cloud_call(content, schema, max_tokens) end)
+  end
+
+  # Ollama's native /api/chat, non-streaming, thinking off (gemma otherwise
+  # answers inside the thinking field instead of content), structured output
+  # via `format`.
+  defp local_call(nil, _content, _schema), do: {:unreachable, :no_local_provider}
+
+  defp local_call(url, content, schema) do
+    body = %{
+      model: local_llm_model(),
+      stream: false,
+      think: false,
+      format: schema,
+      options: %{temperature: 0},
+      messages: [
+        %{role: "system", content: "You are a precise document-understanding engine. Return ONLY the requested JSON."},
+        %{role: "user", content: content}
+      ]
+    }
+
+    case Req.post(Path.join(url, "/api/chat"), json: body, receive_timeout: @local_timeout) do
+      {:ok, %{status: 200, body: %{"message" => %{"content" => text}}}} ->
+        case Jason.decode(text || "{}") do
+          {:ok, parsed} -> {:ok, parsed}
+          error -> {:error, {:parse, error}}
+        end
+
+      {:ok, %{status: status, body: body}} when status >= 500 ->
+        {:unreachable, {:local_status, status, body}}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:local_status, status, body}}
+
+      {:error, reason} ->
+        {:unreachable, {:local_transport, reason}}
+    end
+  end
+
+  # Only reached when CLOUD_FALLBACK=true.
+  defp cloud_call(content, schema, max_tokens) do
+    key = System.get_env("OPENROUTER_API_KEY", "")
+    if key == "" do
+      {:error, :no_openrouter_key}
+    else
+      models()
+      |> Enum.reduce({:error, :no_models}, fn model, acc ->
+        case cloud_call_with(model, key, content, schema, max_tokens) do
           {:ok, parsed} -> {:ok, parsed}
           error -> Logger.warning("[understand] model #{model} failed: #{inspect(error)}"); acc
         end
       end)
-
-    last
-  catch
-    thrown -> thrown
+    end
   end
 
-  defp call_model(model, key, content, schema, max_tokens) do
+  defp cloud_call_with(model, key, content, schema, max_tokens) do
     case Req.post("https://openrouter.ai/api/v1/chat/completions",
            json: %{
              model: model,
