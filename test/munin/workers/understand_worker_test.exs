@@ -36,7 +36,7 @@ defmodule Munin.Workers.UnderstandWorkerTest do
   end
 
   test "local unreachable, cloud off -> Oban retries, no 'classification failed' is written", %{doc: doc} do
-    assert {:error, :no_local_provider} =
+    assert {:snooze, _} =
              UnderstandWorker.perform(%Oban.Job{args: %{"id" => doc.id}})
 
     reloaded = Repo.get!(Document, doc.id)
