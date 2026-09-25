@@ -81,3 +81,31 @@ if (process.env.NODE_ENV === "development") {
   })
 }
 
+
+// ---------- Munin shell: active nav + mobile menu ----------
+(() => {
+  const path = window.location.pathname
+
+  const applyActive = () => {
+    document.querySelectorAll(".m-nav-item[data-nav]").forEach(el => {
+      const target = el.dataset.nav
+      const exact = el.dataset.navExact === "true"
+      const hit = exact ? path === target : path.startsWith(target)
+      el.classList.toggle("m-active", hit)
+    })
+  }
+
+  applyActive()
+
+  const menuBtn = document.getElementById("m-menu-btn")
+  if (menuBtn) {
+    menuBtn.addEventListener("click", () => document.body.classList.toggle("m-nav-open"))
+  }
+  const scrim = document.getElementById("m-scrim")
+  if (scrim) {
+    scrim.addEventListener("click", () => document.body.classList.remove("m-nav-open"))
+  }
+
+  // live navigations: re-run active highlighting after patches
+  window.addEventListener("phx:navigated", applyActive)
+})()

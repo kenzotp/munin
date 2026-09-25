@@ -1,72 +1,53 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <.live_title default="Munin" suffix=" · Phoenix Framework" phx-no-format>{assigns[:page_title]}</.live_title>
+    <.live_title default="Munin" suffix=" · Munin" phx-no-format>{assigns[:page_title]}</.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
-    <script>
-      (() => {
-        const systemTheme = () => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-
-        const setTheme = (theme) => {
-          if (theme === "system") {
-            localStorage.removeItem("phx:theme");
-            document.documentElement.setAttribute("data-theme", systemTheme());
-            document.documentElement.setAttribute("data-theme-source", "system");
-          } else {
-            localStorage.setItem("phx:theme", theme);
-            document.documentElement.setAttribute("data-theme", theme);
-            document.documentElement.setAttribute("data-theme-source", "user");
-          }
-        };
-        if (!document.documentElement.hasAttribute("data-theme")) {
-          setTheme(localStorage.getItem("phx:theme") || "system");
-        }
-        window.addEventListener("storage", (e) => e.key === "phx:theme" && setTheme(e.newValue || "system"));
-        window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
-
-        matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
-          if (document.documentElement.getAttribute("data-theme-source") === "system") {
-            document.documentElement.setAttribute("data-theme", systemTheme());
-          }
-        });
-      })();
-    </script>
   </head>
-  <body>
-    <ul class="menu menu-horizontal w-full relative z-10 flex items-center gap-4 px-4 sm:px-6 lg:px-8 justify-end">
-      <%= if @current_scope do %>
-        <li>
-          {@current_scope.user.email}
-        </li>
-        <li>
-          <.link href={~p"/reminders"}>Reminders</.link>
-        </li>
-        <li>
-          <.link href={~p"/money"}>Money</.link>
-        </li>
-        <li>
-          <.link href={~p"/tax"}>Tax</.link>
-        </li>
-        <li>
-          <.link href={~p"/users/settings"}>Settings</.link>
-        </li>
-        <li>
-          <.link href={~p"/users/log-out"} method="delete">Log out</.link>
-        </li>
-      <% else %>
-        <li :if={MuninWeb.UserAuth.registration_open?()}>
-          <.link href={~p"/users/register"}>Register</.link>
-        </li>
-        <li>
-          <.link href={~p"/users/log-in"}>Log in</.link>
-        </li>
-      <% end %>
-    </ul>
-    {@inner_content}
+  <body class="m-body">
+    <%= if @current_scope do %>
+      <div class="m-shell">
+        <aside class="m-sidebar" id="m-sidebar">
+          <div class="m-logo"><div class="m-logo-mark">M</div><b>MUNIN</b></div>
+
+          <div class="m-nav-label">Money</div>
+          <.link href={~p"/money"} class="m-nav-item" data-nav="/money" data-nav-exact="true"><i class="ph ph-squares-four"></i>Cockpit</.link>
+          <.link href={~p"/money/tx"} class="m-nav-item" data-nav="/money/tx"><i class="ph ph-arrows-left-right"></i>Transactions</.link>
+          <.link href={~p"/money/subs"} class="m-nav-item" data-nav="/money/subs"><i class="ph ph-arrows-clockwise"></i>Subscriptions</.link>
+          <.link href={~p"/money/import"} class="m-nav-item" data-nav="/money/import"><i class="ph ph-download-simple"></i>Import</.link>
+          <.link href={~p"/tax"} class="m-nav-item" data-nav="/tax"><i class="ph ph-percent"></i>Tax</.link>
+
+          <div class="m-nav-label">Vault</div>
+          <.link href={~p"/documents"} class="m-nav-item" data-nav="/documents"><i class="ph ph-files"></i>Documents</.link>
+          <.link href={~p"/reminders"} class="m-nav-item" data-nav="/reminders"><i class="ph ph-alarm"></i>Reminders</.link>
+
+          <div class="m-nav-label">Account</div>
+          <.link href={~p"/users/settings"} class="m-nav-item" data-nav="/users/settings"><i class="ph ph-gear"></i>Settings</.link>
+          <.link href={~p"/users/log-out"} method="delete" class="m-nav-item"><i class="ph ph-sign-out"></i>Log out</.link>
+        </aside>
+        <div id="m-scrim"></div>
+        <main class="m-main">
+          <div id="m-topbar">
+            <button id="m-menu-btn" type="button"><i class="ph ph-list"></i>Menu</button>
+            <span class="m-tb-title">MUNIN</span>
+          </div>
+          {@inner_content}
+        </main>
+      </div>
+    <% else %>
+      <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
+        <div style="width:100%;max-width:400px;padding:0 16px;">
+          <div class="m-logo" style="justify-content:center;padding-bottom:24px;">
+            <div class="m-logo-mark">M</div><b style="font-size:22px;">MUNIN</b>
+          </div>
+          {@inner_content}
+        </div>
+      </div>
+    <% end %>
   </body>
 </html>

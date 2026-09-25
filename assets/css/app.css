@@ -2,6 +2,7 @@
    https://tailwindcss.com/docs/configuration */
 
 @import "tailwindcss" source(none);
+@import "../vendor/phosphor.css";
 @import "phoenix-colocated/munin/colocated.css";
 @source "../css";
 @source "../js";
@@ -103,3 +104,202 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+/* ================================================================
+   Munin theme — dark + yellow, per the accepted mockup.
+   Ground #0d0e11 · panels #131519 · raised #181b20 · yellow #f5c518
+   ================================================================ */
+
+
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/Inter-Variable-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --m-bg: #0d0e11;
+  --m-panel: #131519;
+  --m-raised: #181b20;
+  --m-hover: #1f232a;
+  --m-line: #23262c;
+  --m-text: #e9ebee;
+  --m-dim: #8d939c;
+  --m-faint: #5b6068;
+  --m-yellow: #f5c518;
+  --m-yellow-hover: #ffd42e;
+  --m-ink: #171204;
+  --m-green: #4ade80;
+  --m-red: #f87171;
+}
+
+html, body { background: var(--m-bg); }
+body {
+  font-family: "Inter", system-ui, sans-serif;
+  color: var(--m-text);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* force dark: the mockup is dark-first, no light mode */
+:root, [data-theme="light"], [data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* ---------- shell ---------- */
+.m-shell { display: flex; min-height: 100vh; }
+.m-sidebar {
+  width: 248px; flex: 0 0 248px; background: var(--m-panel);
+  padding: 22px 14px; display: flex; flex-direction: column; gap: 4px;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+.m-main { flex: 1; padding: 34px 40px 60px; max-width: 1240px; min-width: 0; }
+
+.m-logo { display: flex; align-items: center; gap: 10px; padding: 2px 10px 18px; }
+.m-logo-mark {
+  width: 34px; height: 34px; border-radius: 10px; background: var(--m-yellow);
+  color: var(--m-ink); display: grid; place-items: center; font-weight: 800; font-size: 17px;
+}
+.m-logo b { font-size: 17px; font-weight: 800; letter-spacing: .06em; }
+
+.m-nav-label {
+  font-size: 11px; font-weight: 700; letter-spacing: .12em; color: var(--m-faint);
+  text-transform: uppercase; padding: 16px 10px 7px;
+}
+.m-nav-item {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  padding: 9px 10px; border-radius: 14px; color: var(--m-dim);
+  font-weight: 600; font-size: 14px;
+}
+.m-nav-item i.ph { font-size: 19px; }
+.m-nav-item:hover { background: var(--m-raised); color: var(--m-text); }
+.m-nav-item.m-active { background: var(--m-yellow); color: var(--m-ink); }
+.m-nav-item.m-active:hover { background: var(--m-yellow); color: var(--m-ink); }
+.m-nav-badge {
+  margin-left: auto; background: var(--m-red); color: #2a0505; font-size: 11px;
+  font-weight: 800; border-radius: 8px; padding: 1px 7px;
+}
+.m-nav-item.m-active .m-nav-badge { background: var(--m-ink); color: var(--m-yellow); }
+
+#m-scrim { display: none; }
+#m-topbar { display: none; }
+
+@media (max-width: 760px) {
+  .m-shell { display: block; }
+  .m-sidebar {
+    position: fixed; left: 0; top: 0; z-index: 50; transform: translateX(-100%);
+    transition: transform .18s;
+  }
+  body.m-nav-open .m-sidebar { transform: none; }
+  #m-scrim {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 49;
+  }
+  body.m-nav-open #m-scrim { display: block; }
+  .m-main { padding: 20px 16px 90px; }
+  #m-topbar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+  }
+  #m-topbar .m-tb-title { font-weight: 800; font-size: 14px; letter-spacing: .06em; }
+  #m-menu-btn {
+    display: inline-flex; align-items: center; gap: 8px; background: var(--m-raised);
+    border-radius: 12px; padding: 8px 12px; font-weight: 700; font-size: 13px;
+    color: var(--m-text);
+  }
+}
+
+/* ---------- surfaces ---------- */
+.m-panel { background: var(--m-panel); border-radius: 22px; padding: 22px; }
+.m-raised { background: var(--m-raised); border-radius: 14px; }
+
+/* ---------- chips ---------- */
+.m-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+  font-weight: 700; border-radius: 8px; padding: 3px 9px; white-space: nowrap;
+}
+.m-chip i.ph { font-size: 13px; }
+.m-chip-green { background: rgba(74, 222, 128, .13); color: var(--m-green); }
+.m-chip-red { background: rgba(248, 113, 113, .13); color: var(--m-red); }
+.m-chip-yellow { background: rgba(245, 197, 24, .14); color: var(--m-yellow); }
+.m-chip-dim { background: var(--m-raised); color: var(--m-dim); }
+
+/* ---------- buttons ---------- */
+.m-btn {
+  display: inline-flex; align-items: center; gap: 8px; font-weight: 700;
+  font-size: 14px; border-radius: 14px; padding: 10px 18px;
+  background: var(--m-raised); color: var(--m-text); cursor: pointer;
+}
+.m-btn:hover { background: var(--m-hover); }
+.m-btn-primary { background: var(--m-yellow); color: var(--m-ink); }
+.m-btn-primary:hover { background: var(--m-yellow-hover); }
+.m-btn-sm { padding: 7px 13px; font-size: 13px; border-radius: 11px; }
+.m-btn-ghost { background: none; color: var(--m-dim); padding: 10px 12px; }
+.m-btn-ghost:hover { color: var(--m-text); background: var(--m-raised); }
+
+/* ---------- page headers ---------- */
+.m-page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 26px; flex-wrap: wrap; }
+.m-page-head h1 { font-size: 24px; font-weight: 800; letter-spacing: -.01em; }
+.m-page-head .m-sub { color: var(--m-dim); font-size: 13.5px; margin-top: 4px; }
+.m-page-head .m-spacer { flex: 1; }
+
+.m-sec {
+  font-size: 13px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--m-faint); margin: 28px 0 12px;
+}
+
+/* ---------- tables ---------- */
+.m-table { width: 100%; border-collapse: collapse; }
+.m-table th {
+  font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--m-faint); text-align: left; padding: 10px 12px; font-weight: 700;
+}
+.m-table td { padding: 12px; border-top: 1px solid var(--m-line); font-size: 14px; }
+.m-table tbody tr:hover td { background: var(--m-raised); }
+.m-table .m-num { text-align: right; }
+.m-pos { color: var(--m-green); font-weight: 700; }
+.m-neg { color: var(--m-red); font-weight: 700; }
+.m-dim { color: var(--m-dim); }
+.m-faint { color: var(--m-faint); }
+
+/* ---------- forms ---------- */
+.m-input {
+  background: var(--m-raised); border: none; outline: none; border-radius: 14px;
+  padding: 10px 14px; color: var(--m-text); font: inherit; font-size: 14px;
+}
+.m-input::placeholder { color: var(--m-faint); }
+.m-input:focus { outline: 2px solid rgba(245, 197, 24, .4); }
+.m-select {
+  background: var(--m-raised); border: none; outline: none; border-radius: 11px;
+  padding: 6px 10px; color: var(--m-text); font: inherit; font-size: 13px;
+}
+
+/* ---------- segmented control ---------- */
+.m-seg { display: inline-flex; background: var(--m-raised); border-radius: 14px; padding: 4px; gap: 2px; }
+.m-seg button {
+  padding: 5px 12px; border-radius: 10px; font-size: 12.5px; font-weight: 700;
+  color: var(--m-dim); cursor: pointer;
+}
+.m-seg button.m-on { background: var(--m-yellow); color: var(--m-ink); }
+
+/* keep LiveView wrapper divs transparent so the shell flexes through them */
+[data-phx-session], [data-phx-teleported-src] { display: contents; }
+
+/* ---------- links, misc ---------- */
+.m-link { color: var(--m-yellow); font-weight: 600; }
+.m-link:hover { text-decoration: underline; }
+.chip-like {
+  background: var(--m-raised); color: var(--m-dim); font-size: 11px; font-weight: 700;
+  border-radius: 8px; padding: 2px 8px; margin-left: 6px;
+  text-transform: none; letter-spacing: 0; display: inline-block;
+}
+
+/* ---------- flashes (daisyUI override, unlayered wins) ---------- */
+.alert {
+  border-radius: 18px; border: none; background: var(--m-raised);
+  color: var(--m-text); font-weight: 600; font-size: 14px; padding: 14px 18px;
+}
+.alert-info { background: rgba(245, 197, 24, .12); color: var(--m-yellow); }
+.alert-error { background: rgba(248, 113, 113, .12); color: var(--m-red); }
+
+/* ---------- core_components inputs ---------- */
+input[type="checkbox"] { accent-color: var(--m-yellow); }

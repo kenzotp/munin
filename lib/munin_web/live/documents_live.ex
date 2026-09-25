@@ -86,7 +86,7 @@ defmodule MuninWeb.DocumentsLive do
           <% end %>
         </p>
       <% else %>
-        <table class="w-full text-sm">
+        <table class="m-table">
           <thead>
             <tr class="border-b border-zinc-200 text-left text-xs text-zinc-500 uppercase dark:border-zinc-700">
               <th class="py-2 pr-3">Document</th>
@@ -150,7 +150,7 @@ defmodule MuninWeb.DocumentsLive do
       class={
         "rounded-full px-3 py-1 text-xs font-medium " <>
           if @current == @view,
-            do: "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900",
+            do: "bg-[#f5c518] text-[#171204]",
             else: "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300"
       }
     >

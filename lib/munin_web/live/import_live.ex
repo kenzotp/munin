@@ -155,25 +155,25 @@ defmodule MuninWeb.ImportLive do
     ~H"""
     <div class="mx-auto max-w-3xl px-4 py-8">
       <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-semibold">Import</h1>
+        <h1 class="text-2xl font-extrabold">Import</h1>
         <div class="flex gap-3 text-sm">
-          <.link href={~p"/money"} class="text-blue-600 dark:text-blue-400 hover:underline">Cockpit</.link>
-          <.link href={~p"/money/tx"} class="text-blue-600 dark:text-blue-400 hover:underline">Transactions</.link>
+          <.link href={~p"/money"} class="m-link">Cockpit</.link>
+          <.link href={~p"/money/tx"} class="m-link">Transactions</.link>
         </div>
       </div>
 
       <.flash kind={:info} title="" flash={@flash} />
       <.flash kind={:error} title="" flash={@flash} />
 
-      <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 mb-6">
-        <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">Bank sync · FinTS</h2>
+      <div class="m-panel mb-6">
+        <h2 class="m-sec mb-3">Bank sync · FinTS</h2>
         <p class="text-xs text-zinc-400 mb-3">{@sync_status}</p>
         <%= if @fints_configured do %>
           <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
             Read-only statement fetch from your bank (Sparkasse). Approval happens in your banking app (S-pushTAN) — no TAN is ever typed here.
           </p>
           <%= if @fints_busy do %>
-            <p class="text-sm text-blue-600 dark:text-blue-400 mb-3">
+            <p class="text-sm text-[#8d939c] mb-3">
               Waiting for approval — open the S-pushTAN app and approve the push now.
             </p>
           <% end %>
@@ -192,10 +192,10 @@ defmodule MuninWeb.ImportLive do
           <% end %>
           <form phx-submit="fints" class="flex items-center gap-2">
             <input type="number" name="days" min="1" max="720" value={@fints_days} disabled={@fints_busy}
-              class="w-24 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm" />
+              class="w-24 m-input" />
             <span class="text-sm text-zinc-500">days back</span>
             <button type="submit" disabled={@fints_busy or match?({:latched, _, _}, @fints_latch)}
-              class="rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold px-4 py-2 text-sm">
+              class="m-btn m-btn-primary disabled:opacity-40">
               <%= if @fints_busy, do: "Waiting for approval…", else: "Fetch statements" %>
             </button>
           </form>
@@ -211,8 +211,8 @@ defmodule MuninWeb.ImportLive do
         <% end %>
       </div>
 
-      <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 mb-6">
-        <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">Demo data</h2>
+      <div class="m-panel mb-6">
+        <h2 class="m-sec mb-3">Demo data</h2>
         <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
           8 months of plausible business + private lines, plus two demo invoices so the matching queue has something to show. Marked <b>simulated</b> — removable.
         </p>
@@ -225,18 +225,18 @@ defmodule MuninWeb.ImportLive do
 
       <form phx-submit="save" class="space-y-4">
         <label class="block text-sm">
-          <span class="text-xs font-bold uppercase tracking-wider text-zinc-500">Account label</span>
+          <span class="m-sec">Account label</span>
           <input type="text" name="account" value={@account}
-            class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm" />
+            class="mt-1 w-full m-input" />
         </label>
         <label class="block text-sm">
-          <span class="text-xs font-bold uppercase tracking-wider text-zinc-500">Paste bank CSV</span>
+          <span class="m-sec">Paste bank CSV</span>
           <textarea name="csv" rows="12" phx-debounce="250"
-            class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm font-mono"
+            class="mt-1 w-full m-input font-mono"
             placeholder={"Buchungstag;Wertstellung;Vorgang;Buchungstext;Zahlungspflichtige(r);IBAN;Betrag\n01.09.2026;01.09.2026;Lastschrift;OpenRouter AI API;OPENROUTER;DE89...;-12,34"}><%= @csv %></textarea>
           <span class="text-xs text-zinc-400">Sparkasse / generic German exports parse as-is — semicolons, commas or tabs.</span>
         </label>
-        <button type="submit" class="rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold px-4 py-2 text-sm">Import CSV</button>
+        <button type="submit" class="m-btn m-btn-primary">Import CSV</button>
       </form>
     </div>
     """

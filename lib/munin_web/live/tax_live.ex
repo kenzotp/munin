@@ -35,16 +35,16 @@ defmodule MuninWeb.TaxLive do
     ~H"""
     <div class="mx-auto max-w-3xl px-4 py-8">
       <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-semibold">Tax <span class="text-zinc-400 text-base">{@year}</span></h1>
+        <h1 class="text-2xl font-extrabold">Tax <span class="text-zinc-400 text-base">{@year}</span></h1>
         <div class="flex gap-3 text-sm">
           <%= for y <- [@year - 1, @year, @year + 1] do %>
-            <.link href={~p"/tax?#{%{year: y}}"} class={if y == @year, do: "font-bold text-blue-600 dark:text-blue-400", else: "text-zinc-500 hover:underline"}>{y}</.link>
+            <.link href={~p"/tax?#{%{year: y}}"} class={if y == @year, do: "font-bold text-[#f5c518]", else: "text-[#8d939c] hover:underline"}>{y}</.link>
           <% end %>
         </div>
       </div>
 
-      <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 mb-6">
-        <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">EÜR picture (business lines, classified)</h2>
+      <div class="m-panel mb-6">
+        <h2 class="m-sec mb-3">EÜR picture (business lines, classified)</h2>
         <table class="w-full text-sm mb-2">
           <tbody>
             <tr><td class="py-1">Revenue</td><td class="py-1 text-right font-semibold">{money(@eur.revenue)}</td></tr>
@@ -59,9 +59,9 @@ defmodule MuninWeb.TaxLive do
         </table>
       </div>
 
-      <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 mb-6">
-        <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">USt estimate worksheet</h2>
-        <table class="w-full text-sm">
+      <div class="m-panel mb-6">
+        <h2 class="m-sec mb-3">USt estimate worksheet</h2>
+        <table class="m-table">
           <tbody>
             <tr><td class="py-1">Output VAT (19% assumed on revenue)</td><td class="py-1 text-right">{money(@eur.output_vat)}</td></tr>
             <tr><td class="py-1 text-zinc-500">Input VAT (from matched invoices)</td><td class="py-1 text-right text-zinc-500">− {money(@eur.input_vat)}</td></tr>

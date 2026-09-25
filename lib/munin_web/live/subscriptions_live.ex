@@ -45,10 +45,10 @@ defmodule MuninWeb.SubscriptionsLive do
     ~H"""
     <div class="mx-auto max-w-5xl px-4 py-8">
       <div class="flex items-center justify-between mb-2">
-        <h1 class="text-2xl font-semibold">Subscriptions</h1>
+        <h1 class="text-2xl font-extrabold">Subscriptions</h1>
         <div class="flex gap-3 text-sm">
-          <.link href={~p"/money"} class="text-blue-600 dark:text-blue-400 hover:underline">Cockpit</.link>
-          <.link href={~p"/money/tx"} class="text-blue-600 dark:text-blue-400 hover:underline">Transactions</.link>
+          <.link href={~p"/money"} class="m-link">Cockpit</.link>
+          <.link href={~p"/money/tx"} class="m-link">Transactions</.link>
         </div>
       </div>
       <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-6">
@@ -58,13 +58,13 @@ defmodule MuninWeb.SubscriptionsLive do
       <.flash kind={:info} title="" flash={@flash} />
 
       <div class="grid sm:grid-cols-2 gap-4 mb-8">
-        <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
-          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500">Recurring per month</h2>
+        <div class="m-panel">
+          <h2 class="m-sec">Recurring per month</h2>
           <p class="text-2xl font-semibold mt-2">{money(@monthly_total)}</p>
           <p class="text-xs text-zinc-400 mt-1">{length(Enum.filter(@subs, &(&1.interval == 1)))} monthly subscriptions</p>
         </div>
-        <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
-          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500">All recurring, projected year</h2>
+        <div class="m-panel">
+          <h2 class="m-sec">All recurring, projected year</h2>
           <p class="text-2xl font-semibold mt-2">{money(@yearly_total)}</p>
           <p class="text-xs text-zinc-400 mt-1">{length(@subs)} subscriptions total</p>
         </div>
@@ -75,9 +75,9 @@ defmodule MuninWeb.SubscriptionsLive do
           Nothing recurring detected yet — it needs a few months of bank lines.
         </p>
       <% else %>
-        <table class="w-full text-sm">
+        <table class="m-table">
           <thead>
-            <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
+            <tr class="text-left">
               <th class="py-2 pr-4">Payee</th><th class="py-2 pr-4 text-right">Charge</th><th class="py-2 pr-4 text-right">Per year</th><th class="py-2 pr-4">Next charge</th><th class="py-2 pr-4">Last seen</th><th class="py-2 pr-4">Flags</th><th class="py-2"></th>
             </tr>
           </thead>
@@ -107,7 +107,7 @@ defmodule MuninWeb.SubscriptionsLive do
                     </span>
                   <% end %>
                   <%= if s.scope == "business" do %>
-                    <span class="rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 text-xs font-medium px-2.5 py-0.5">business</span>
+                    <span class="rounded-full m-chip m-chip-dim text-xs font-medium px-2.5 py-0.5">business</span>
                   <% end %>
                 </td>
                 <td class="py-2 text-right">

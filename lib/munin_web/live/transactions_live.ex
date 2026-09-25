@@ -159,22 +159,22 @@ defmodule MuninWeb.TransactionsLive do
     ~H"""
     <div class="mx-auto max-w-6xl px-4 py-8">
       <div class="flex items-center justify-between mb-2">
-        <h1 class="text-2xl font-semibold">Transactions <span class="text-zinc-400 text-base">{@total}</span></h1>
+        <h1 class="text-2xl font-extrabold">Transactions <span class="text-zinc-400 text-base">{@total}</span></h1>
         <div class="flex gap-3 text-sm">
-          <.link href={~p"/money"} class="text-blue-600 dark:text-blue-400 hover:underline">Cockpit</.link>
-          <.link href={~p"/money/subs"} class="text-blue-600 dark:text-blue-400 hover:underline">Subscriptions</.link>
-          <.link href={~p"/money/import"} class="text-blue-600 dark:text-blue-400 hover:underline">Import</.link>
+          <.link href={~p"/money"} class="m-link">Cockpit</.link>
+          <.link href={~p"/money/subs"} class="m-link">Subscriptions</.link>
+          <.link href={~p"/money/import"} class="m-link">Import</.link>
         </div>
       </div>
 
       <.flash kind={:info} title="" flash={@flash} />
 
-      <div :if={@transfer_pairs != []} class="rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950 p-5 mb-6">
+      <div :if={@transfer_pairs != []} class="rounded-xl m-panel mb-6">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500">
+          <h2 class="m-sec">
             Internal transfers <span class="chip-like">{length(@transfer_pairs)} pair(s) counted as income + spend</span>
           </h2>
-          <button phx-click="mark_all_transfers" class="rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5">
+          <button phx-click="mark_all_transfers" class="m-btn m-btn-primary m-btn-sm">
             Mark all {length(@transfer_pairs)} as transfers
           </button>
         </div>
@@ -183,16 +183,16 @@ defmodule MuninWeb.TransactionsLive do
             <span class="text-zinc-500">{MuninWeb.Format.date(out.booked_at)}</span>
             <span class="text-zinc-400">{out.account} → {inn.account}</span>
             <span class="font-medium whitespace-nowrap">{money(out.amount_cents)}</span>
-            <button phx-click="mark_transfer" phx-value-out={out.id} phx-value-in={inn.id} class="ml-auto rounded-lg bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-100 dark:hover:bg-zinc-300 text-white dark:text-zinc-900 text-xs font-semibold px-2.5 py-1">Transfer</button>
+            <button phx-click="mark_transfer" phx-value-out={out.id} phx-value-in={inn.id} class="ml-auto m-btn m-btn-sm">Transfer</button>
           </li>
         </ul>
         <p class="text-xs text-zinc-400 mt-2">Transfers leave the spend and income sums on the cockpit and the EÜR.</p>
       </div>
 
-      <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 mb-8">
+      <div class="m-panel mb-8">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500">Matching queue <span class="chip-like">{length(@queue)} waiting · {@auto} auto-candidates</span></h2>
-          <button phx-click="automatch" class="rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5">Auto-match all</button>
+          <h2 class="m-sec">Matching queue <span class="chip-like">{length(@queue)} waiting · {@auto} auto-candidates</span></h2>
+          <button phx-click="automatch" class="m-btn m-btn-primary m-btn-sm">Auto-match all</button>
         </div>
         <%= if @queue == [] do %>
           <p class="text-sm text-zinc-500">No invoices waiting for a bank line. Upload invoices (or let the pipeline read them) and matching happens here.</p>
@@ -212,11 +212,11 @@ defmodule MuninWeb.TransactionsLive do
                 <ul class="space-y-1">
                   <%= for {line, score} <- cands do %>
                     <li class="flex items-center gap-2 text-sm">
-                      <span class={"rounded px-1.5 py-0.5 text-xs font-bold " <> if score >= 1, do: "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300", else: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}>score {score}</span>
+                      <span class={"rounded px-1.5 py-0.5 text-xs font-bold " <> if score >= 1, do: "m-chip m-chip-green", else: "m-chip m-chip-dim"}>score {score}</span>
                       <span class="text-zinc-500">{MuninWeb.Format.date(line.booked_at)}</span>
                       <span class="truncate flex-1">{line.payer} — <span class="text-zinc-400">{line.description}</span></span>
                       <span class="whitespace-nowrap">{money(line.amount_cents)}</span>
-                      <button phx-click="confirm" phx-value-doc={doc.id} phx-value-line={line.id} class="rounded-lg bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-100 dark:hover:bg-zinc-300 text-white dark:text-zinc-900 text-xs font-semibold px-2.5 py-1">Confirm</button>
+                      <button phx-click="confirm" phx-value-doc={doc.id} phx-value-line={line.id} class="m-btn m-btn-sm">Confirm</button>
                     </li>
                   <% end %>
                 </ul>
@@ -226,8 +226,8 @@ defmodule MuninWeb.TransactionsLive do
         <% end %>
       </div>
 
-      <details class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 mb-4" open={@rules != []}>
-        <summary class="cursor-pointer text-xs font-bold uppercase tracking-wider text-zinc-500">
+      <details class="m-panel mb-4" open={@rules != []}>
+        <summary class="cursor-pointer m-sec">
           Rules <span class="chip-like">{length(@rules)} learned — payee → category + scope</span>
         </summary>
         <%= if @rules == [] do %>
@@ -246,16 +246,16 @@ defmodule MuninWeb.TransactionsLive do
       </details>
 
       <form phx-change="search" class="flex gap-2 items-center mb-4 flex-wrap">
-        <input type="search" name="q" value={@q} placeholder="Search payer / purpose…" class="flex-1 min-w-48 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm" />
+        <input type="search" name="q" value={@q} placeholder="Search payer / purpose…" class="flex-1 min-w-48 m-input" />
         <div class="flex gap-1">
           <%= for s <- ["all", "business", "private"] do %>
             <button type="button" phx-click="scope" phx-value-scope={s}
-              class={"rounded-full px-3 py-1 text-xs font-medium " <> if @scope == s, do: "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900", else: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}>
+              class={"rounded-full px-3 py-1 text-xs font-medium " <> if @scope == s, do: "bg-[#f5c518] text-[#171204]", else: "m-chip m-chip-dim"}>
               {s}
             </button>
           <% end %>
         </div>
-        <select name="account" class="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-2 text-sm">
+        <select name="account" class="m-select">
           <option value="all" selected={@account == "all"}>All accounts</option>
           <%= for {acc, count, _latest} <- @accounts do %>
             <option value={acc} selected={@account == acc}>{acc} ({count})</option>
@@ -264,9 +264,9 @@ defmodule MuninWeb.TransactionsLive do
       </form>
 
       <div id="tx-lines" phx-update="stream">
-        <table class="w-full text-sm">
+        <table class="m-table">
           <thead>
-            <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
+            <tr class="text-left">
               <th class="py-2 pr-4">Date</th><th class="py-2 pr-4">Payer / purpose</th><th class="py-2 pr-4">Category</th><th class="py-2 pr-4">G/P</th><th class="py-2 pr-4">Receipt</th><th class="py-2 pr-4"></th><th class="py-2 text-right">Amount</th>
             </tr>
           </thead>
@@ -280,7 +280,7 @@ defmodule MuninWeb.TransactionsLive do
               <td class="py-2 pr-4">
                 <form phx-change="set_category" id={"cat-#{t.id}"}>
                   <input type="hidden" name="_id" value={t.id} />
-                  <select name="category" class="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-transparent px-1.5 py-1 text-xs">
+                  <select name="category" class="m-select">
                     <option value={t.category} selected>{t.category}</option>
                     <%= for c <- @categories -- [t.category] do %>
                       <option value={c}>{c}</option>
@@ -306,11 +306,11 @@ defmodule MuninWeb.TransactionsLive do
               </td>
               <td class="py-2 pr-4 whitespace-nowrap">
                 <button phx-click="toggle_transfer" phx-value-id={t.id} title={if t.is_transfer, do: "Back in the sums", else: "Internal transfer?"}
-                  class={"text-xs font-semibold px-1.5 py-0.5 rounded " <> if t.is_transfer, do: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300", else: "text-zinc-300 dark:text-zinc-600 hover:text-zinc-500"}>
+                  class={"text-xs font-semibold px-1.5 py-0.5 rounded " <> if t.is_transfer, do: "m-chip m-chip-yellow", else: "text-zinc-300 dark:text-zinc-600 hover:text-zinc-500"}>
                   ⇄
                 </button>
                 <button phx-click="make_rule" phx-value-id={t.id} title="Learn: this payee → this category + scope"
-                  class="text-xs font-semibold text-zinc-400 hover:text-blue-600 px-1">→ rule</button>
+                  class="text-xs font-semibold text-zinc-400 hover:text-[#f5c518] px-1">→ rule</button>
               </td>
               <td class={"py-2 text-right whitespace-nowrap " <> if t.amount_cents < 0, do: "", else: "text-green-600 dark:text-green-400"}>{money(t.amount_cents)}</td>
             </tr>

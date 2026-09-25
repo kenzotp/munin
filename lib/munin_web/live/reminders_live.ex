@@ -24,9 +24,9 @@ defmodule MuninWeb.RemindersLive do
       <%= if @entries == [] do %>
         <p class="text-zinc-500 dark:text-zinc-400">Nothing dated yet — upload invoices, receipts and contracts and they will show up here.</p>
       <% else %>
-        <table class="w-full text-sm">
+        <table class="m-table">
           <thead>
-            <tr class="text-left text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <tr class="text-left dark:text-zinc-400">
               <th class="py-2 pr-4">Date</th><th class="py-2 pr-4">What</th><th class="py-2 pr-4">Document</th><th class="py-2 pr-4">Amount</th><th class="py-2">Status</th>
             </tr>
           </thead>
@@ -35,7 +35,7 @@ defmodule MuninWeb.RemindersLive do
               <tr class="border-t border-zinc-200 dark:border-zinc-800">
                 <td class="py-2 pr-4 whitespace-nowrap">{Date.to_iso8601(e.date)}</td>
                 <td class="py-2 pr-4">{e.kind}{if e.label, do: " · " <> e.label, else: ""}</td>
-                <td class="py-2 pr-4"><.link navigate={~p"/documents/#{e.doc.id}"} class="text-blue-600 dark:text-blue-400 hover:underline">{e.doc.title || e.doc.filename}</.link></td>
+                <td class="py-2 pr-4"><.link navigate={~p"/documents/#{e.doc.id}"} class="m-link">{e.doc.title || e.doc.filename}</.link></td>
                 <td class="py-2 pr-4 whitespace-nowrap"><%= if e.amount do %>{:erlang.float_to_binary(e.amount + 0.0, decimals: 2)} {e.currency}<% end %></td>
                 <td class="py-2"><span class={chip_class(e.urgency)}>{chip_text(e, @today)}</span></td>
               </tr>
@@ -47,9 +47,9 @@ defmodule MuninWeb.RemindersLive do
     """
   end
 
-  defp chip_class(:overdue), do: "rounded-full px-3 py-1 text-xs font-medium bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
-  defp chip_class(:soon), do: "rounded-full px-3 py-1 text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-  defp chip_class(:info), do: "rounded-full px-3 py-1 text-xs font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+  defp chip_class(:overdue), do: "rounded-full px-3 py-1 text-xs font-medium m-chip m-chip-red"
+  defp chip_class(:soon), do: "rounded-full px-3 py-1 text-xs font-medium m-chip m-chip-yellow"
+  defp chip_class(:info), do: "rounded-full px-3 py-1 text-xs font-medium m-chip m-chip-dim"
   defp chip_class(_), do: "rounded-full px-3 py-1 text-xs font-medium bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
 
   defp entries(docs) do
