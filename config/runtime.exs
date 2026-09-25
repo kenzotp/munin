@@ -22,6 +22,11 @@ end
 
 config :munin, MuninWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Registration is closed by default. The owner opens it deliberately (e.g. to
+# provision a new account) by setting REGISTRATION_OPEN=true, then closes it
+# again. See lib/munin_web/user_auth.ex `registration_open?/0`.
+config :munin, :registration_open, System.get_env("REGISTRATION_OPEN") == "true"
+
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
   config :munin, MuninWeb.Endpoint,

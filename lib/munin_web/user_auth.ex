@@ -257,6 +257,17 @@ defmodule MuninWeb.UserAuth do
     end)
   end
 
+  @doc """
+  Whether new-account registration is open.
+
+  Closed by default; set via the REGISTRATION_OPEN environment variable
+  (see config/runtime.exs). The owner opens it deliberately to provision
+  a new account, then closes it again.
+  """
+  def registration_open? do
+    Application.get_env(:munin, :registration_open, false)
+  end
+
   @doc "Returns the path to redirect to after log in."
   # the user was already logged in, redirect to settings
   def signed_in_path(%Plug.Conn{assigns: %{current_scope: %Scope{user: %Accounts.User{}}}}) do
