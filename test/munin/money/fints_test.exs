@@ -392,4 +392,40 @@ defmodule Munin.Money.FintsTest do
       assert {:ok, _} = Fints.fetch(~D[2026-01-01])
     end
   end
+
+  describe "record_sync!/2 and last_sync/0" do
+    test "last_sync/0 is nil until something is recorded" do
+      assert Fints.last_sync() == nil
+    end
+
+    test "records an ok outcome with imported/duplicate counts and the trigger" do
+      assert :ok =
+               Fints.record_sync!(:manual, {:ok, %{imported: 5, duplicates: 2, accounts: [], errors: []}})
+
+      sync = Fints.last_sync()
+      assert sync.status == "ok"
+      assert sync.trigger == "manual"
+      assert sync.imported == 5
+      assert sync.duplicates == 2
+      assert sync.error_message == nil
+      assert %DateTime{} = sync.attempted_at
+    end
+
+    test "records an error outcome with the message and the trigger" do
+      assert :ok = Fints.record_sync!(:scheduled, {:error, "sidecar unreachable"})
+
+      sync = Fints.last_sync()
+      assert sync.status == "error"
+      assert sync.trigger == "scheduled"
+      assert sync.error_message == "sidecar unreachable"
+      assert sync.imported == nil
+    end
+
+    test "last_sync/0 returns the most recently recorded attempt" do
+      Fints.record_sync!(:manual, {:error, "first"})
+      Fints.record_sync!(:scheduled, {:ok, %{imported: 1, duplicates: 0, accounts: [], errors: []}})
+
+      assert %{trigger: "scheduled", status: "ok"} = Fints.last_sync()
+    end
+  end
 end

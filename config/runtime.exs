@@ -126,11 +126,24 @@ if config_env() == :prod do
     raise "environment variable UPLOAD_TOKEN is missing (token auth for /api/upload)"
   end
 
+  # BANK_SYNC=off disables the daily job entirely (also left out when FinTS
+  # itself isn't configured — nothing to sync); BANK_SYNC_CRON overrides the
+  # default "0 5 * * *" (05:00 Europe/Berlin). See Munin.Workers.BankSyncWorker.
+  oban_plugins =
+    [{Oban.Plugins.Pruner, max_age: 300}, {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(2)}] ++
+      List.wrap(
+        Munin.Workers.BankSyncWorker.cron_plugin(
+          Munin.Money.Fints.configured?(),
+          System.get_env("BANK_SYNC"),
+          System.get_env("BANK_SYNC_CRON")
+        )
+      )
+
   config :munin, Oban,
     engine: Oban.Engines.Basic,
     repo: Munin.Repo,
     queues: [default: 5, reading: 2],
-    plugins: [{Oban.Plugins.Pruner, max_age: 300}, {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(2)}],
+    plugins: oban_plugins,
     name: Oban
 
   # ── Jev (TypeSafe System One) invoice-match second opinion ─────────────────

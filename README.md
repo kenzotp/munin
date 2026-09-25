@@ -34,7 +34,9 @@ PC-side file organizer that sweeps folders and hands finance documents over.
   parse as-is) or use the built-in simulator. Real FinTS sync is read-only
   and activates with your own free DK product registration (fints.org) —
   set `FINTS_*` env vars; registration IDs are personal and never shipped in
-  this repo.
+  this repo. Once configured, a daily Oban job pulls the last 14 days
+  automatically at 05:00 Europe/Berlin — turn it off with `BANK_SYNC=off`,
+  or change the time with `BANK_SYNC_CRON` (default `0 5 * * *`).
 - **German tax pack**: categories carry VAT rates + EÜR lines, live EÜR,
   USt-Voranmeldung worksheet, DATEV CSV + receipt-image export, inbound
   ZUGFeRD/XRechnung e-invoice parsing.

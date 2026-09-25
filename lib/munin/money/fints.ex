@@ -38,7 +38,9 @@ defmodule Munin.Money.Fints do
   process and is released automatically if that process dies.
   """
   require Logger
+  import Ecto.Query, only: [from: 2]
   alias Munin.Money
+  alias Munin.Money.BankSync
   alias Munin.Money.FintsState
   alias Munin.Repo
 
@@ -209,6 +211,43 @@ defmodule Munin.Money.Fints do
 
   def reset_state! do
     reset_state!(System.get_env("FINTS_BLZ"), System.get_env("FINTS_LOGIN"))
+  end
+
+  # ------------------------------------------------------------ sync record
+
+  @doc """
+  Records the outcome of a fetch attempt — time, trigger (`:scheduled` from
+  the daily Oban job, `:manual` from the Import page button) and either the
+  imported/duplicate counts or the error message. Purely an audit trail for
+  the "last sync" status line on /money and /import; never read by
+  `fetch/2` and never gates a future attempt (that's the latch's job).
+  """
+  def record_sync!(trigger, fetch_result) when trigger in [:scheduled, :manual] do
+    outcome =
+      case fetch_result do
+        {:ok, %{imported: imported, duplicates: duplicates}} ->
+          %{status: "ok", imported: imported, duplicates: duplicates}
+
+        {:error, reason} ->
+          %{status: "error", error_message: reason}
+      end
+
+    attrs =
+      Map.merge(outcome, %{
+        attempted_at: DateTime.utc_now() |> DateTime.truncate(:second),
+        trigger: Atom.to_string(trigger)
+      })
+
+    %BankSync{}
+    |> BankSync.changeset(attrs)
+    |> Repo.insert!()
+
+    :ok
+  end
+
+  @doc "The most recently recorded sync attempt (scheduled or manual), or nil if none yet."
+  def last_sync do
+    Repo.one(from s in BankSync, order_by: [desc: s.attempted_at], limit: 1)
   end
 
   # ----------------------------------------------------------------- latch

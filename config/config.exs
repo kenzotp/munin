@@ -24,6 +24,11 @@ config :munin,
   ecto_repos: [Munin.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# The bank-sync schedule and status line work in Europe/Berlin, in every
+# environment (not just prod) — tests and dev both compute "today" and the
+# next scheduled run the same way the release does.
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+
 # Configure the endpoint
 config :munin, MuninWeb.Endpoint,
   url: [host: "localhost"],

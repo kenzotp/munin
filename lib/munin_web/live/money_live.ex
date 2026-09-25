@@ -5,6 +5,7 @@ defmodule MuninWeb.MoneyLive do
   real banks in P3).
   """
   use MuninWeb, :live_view
+  alias Munin.Workers.BankSyncWorker
 
   @impl true
   def mount(_params, _session, socket) do
@@ -12,7 +13,8 @@ defmodule MuninWeb.MoneyLive do
      assign(socket,
        page_title: "Money",
        stats: Munin.Money.cockpit(6),
-       simulated: Munin.Money.simulated?()
+       simulated: Munin.Money.simulated?(),
+       sync_status: BankSyncWorker.status_line()
      )}
   end
 
@@ -28,6 +30,8 @@ defmodule MuninWeb.MoneyLive do
           <.link href={~p"/tax"} class="text-blue-600 dark:text-blue-400 hover:underline">Tax</.link>
         </div>
       </div>
+
+      <p class="text-xs text-zinc-400 mb-4">{@sync_status}</p>
 
       <%= if @simulated do %>
         <div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">

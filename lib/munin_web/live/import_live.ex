@@ -6,6 +6,7 @@ defmodule MuninWeb.ImportLive do
   use MuninWeb, :live_view
   alias Munin.Money
   alias Munin.Money.Fints
+  alias Munin.Workers.BankSyncWorker
 
   @impl true
   def mount(_params, _session, socket) do
@@ -20,7 +21,8 @@ defmodule MuninWeb.ImportLive do
        fints_missing: Fints.missing_keys(),
        fints_days: "90",
        fints_busy: false,
-       fints_latch: fints_latch()
+       fints_latch: fints_latch(),
+       sync_status: BankSyncWorker.status_line()
      )}
   end
 
@@ -101,24 +103,30 @@ defmodule MuninWeb.ImportLive do
   end
 
   @impl true
-  def handle_async(:fints_fetch, {:ok, {:ok, result}}, socket) do
+  def handle_async(:fints_fetch, {:ok, {:ok, result} = fetch_result}, socket) do
+    Fints.record_sync!(:manual, fetch_result)
+
     {:noreply,
      socket
-     |> assign(fints_busy: false, fints_latch: fints_latch())
+     |> assign(fints_busy: false, fints_latch: fints_latch(), sync_status: BankSyncWorker.status_line())
      |> put_flash(:info, fints_flash_message(result))}
   end
 
-  def handle_async(:fints_fetch, {:ok, {:error, reason}}, socket) do
+  def handle_async(:fints_fetch, {:ok, {:error, reason} = fetch_result}, socket) do
+    Fints.record_sync!(:manual, fetch_result)
+
     {:noreply,
      socket
-     |> assign(fints_busy: false, fints_latch: fints_latch())
+     |> assign(fints_busy: false, fints_latch: fints_latch(), sync_status: BankSyncWorker.status_line())
      |> put_flash(:error, "FinTS: " <> reason)}
   end
 
   def handle_async(:fints_fetch, {:exit, reason}, socket) do
+    Fints.record_sync!(:manual, {:error, "fetch crashed (#{inspect(reason)})"})
+
     {:noreply,
      socket
-     |> assign(fints_busy: false, fints_latch: fints_latch())
+     |> assign(fints_busy: false, fints_latch: fints_latch(), sync_status: BankSyncWorker.status_line())
      |> put_flash(:error, "FinTS: fetch crashed (#{inspect(reason)}).")}
   end
 
@@ -159,6 +167,7 @@ defmodule MuninWeb.ImportLive do
 
       <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 mb-6">
         <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">Bank sync · FinTS</h2>
+        <p class="text-xs text-zinc-400 mb-3">{@sync_status}</p>
         <%= if @fints_configured do %>
           <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
             Read-only statement fetch from your bank (Sparkasse). Approval happens in your banking app (S-pushTAN) — no TAN is ever typed here.

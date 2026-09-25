@@ -73,7 +73,8 @@ defmodule Munin.MixProject do
       {:bandit, "~> 1.5"},
       {:oban, "~> 2.18"},
       {:swoosh, "~> 1.16"},
-      {:req, "~> 0.5"}
+      {:req, "~> 0.5"},
+      {:tz, "~> 0.28"}
     ]
   end
 
