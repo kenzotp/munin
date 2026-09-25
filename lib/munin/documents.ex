@@ -8,6 +8,7 @@ defmodule Munin.Documents do
   import Ecto.Query
   alias Munin.Documents.Document
   alias Munin.Repo
+  require Logger
 
   def vault_path, do: System.get_env("VAULT_PATH", "/vault")
 
@@ -84,10 +85,11 @@ defmodule Munin.Documents do
   end
 
   @doc """
-  The reading ladder, P1 shape: PDFs with an embedded text layer are read
-  directly; anything else goes to the vision sidecar page-render + OpenRouter
-  VLM OCR (see Munin.Reading). Writes body_text + read_status; the original is
-  never touched.
+  The reading ladder: PDFs with an embedded text layer are read directly;
+  anything else goes to the vision sidecar page-render + local-first VLM OCR
+  (see Munin.Reading — local Ollama first, OpenRouter only when
+  CLOUD_FALLBACK=true). Writes body_text + read_status; the original is never
+  touched.
   """
   def read_document!(%Document{} = doc) do
     result = Munin.Reading.read(doc)

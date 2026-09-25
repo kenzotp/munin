@@ -19,23 +19,33 @@ defmodule MuninWeb.DocumentLive do
     doc = socket.assigns.doc
     inv_old = doc.meta["invoice"] || %{}
 
-    invoice =
-      if doc.meta["doc_type"] in ["invoice", "receipt"] or params["total_gross"] != "" do
-        %{
+    if doc.meta["doc_type"] in ["invoice", "receipt"] or params["total_gross"] != "" do
+      with {:ok, total} <- num(params["total_gross"]),
+           {:ok, vat} <- num(params["vat_amount"]),
+           {:ok, net} <- num(params["net_amount"]) do
+        invoice = %{
           "vendor" => params["vendor"],
           "number" => params["number"],
           "date" => params["date"],
           "currency" => params["currency"],
-          "total_gross" => num(params["total_gross"]),
-          "vat_amount" => num(params["vat_amount"]),
-          "net_amount" => num(params["net_amount"]),
-          "checksum_ok" => checksum_ok?(params),
+          "total_gross" => total,
+          "vat_amount" => vat,
+          "net_amount" => net,
+          "checksum_ok" => abs(net + vat - total) <= 0.02,
           "review_needed" => false
         }
-      else
-        inv_old
-      end
 
+        {:noreply, save(socket, doc, params, invoice)}
+      else
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Could not save — #{reason}.")}
+      end
+    else
+      {:noreply, save(socket, doc, params, inv_old)}
+    end
+  end
+
+  defp save(socket, doc, params, invoice) do
     meta =
       (doc.meta || %{})
       |> Map.put("doc_type", params["doc_type"])
@@ -49,34 +59,36 @@ defmodule MuninWeb.DocumentLive do
       |> Munin.Documents.Document.changeset(%{title: params["title"], meta: meta})
       |> Munin.Repo.update()
 
-    {:noreply, assign(socket, doc: doc, inv: stringify(invoice)) |> put_flash(:info, "Saved.")}
+    assign(socket, doc: doc, inv: stringify(invoice)) |> put_flash(:info, "Saved.")
   end
 
-  defp num(""), do: 0.0
+  # German-or-plain amount input → `{:ok, float}` (euros, not cents) or
+  # `{:error, reason}`. Empty input keeps the historical "0.0" behaviour;
+  # anything else reuses `Munin.Money.parse_euro/1` (which already handles
+  # "1.234,56", "1234,56" and "1234.56") so there is only one amount parser in
+  # the app.
+  defp num(nil), do: {:ok, 0.0}
+  defp num(""), do: {:ok, 0.0}
 
   defp num(s) do
-    {f, _} = Float.parse(String.replace(s || "0", ",", "."))
-    f
-  end
-
-  defp checksum_ok?(p) do
-    net = num(p["net_amount"])
-    vat = num(p["vat_amount"])
-    total = num(p["total_gross"])
-    abs(net + vat - total) <= 0.02
+    case Munin.Money.parse_euro(s) do
+      {:ok, cents} -> {:ok, cents / 100.0}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @impl true
   def render(assigns) do
     ~H"""
     <div class="mx-auto max-w-3xl p-6">
+      <Layouts.flash_group flash={@flash} />
       <.link navigate={~p"/documents"} class="text-sm text-sky-500 hover:underline">← Documents</.link>
 
       <div class="mt-3 flex items-center gap-3">
         <h1 class="text-2xl font-bold">{@doc.title || @doc.filename}</h1>
-        <%= if @doc.meta["review_needed"] do %>
+        <%= if review_needed?(@doc) do %>
           <span class="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
-            needs review: {@doc.meta["review_reason"] || "unverified"}
+            needs review: {review_reason(@doc)}
           </span>
         <% end %>
       </div>
@@ -144,6 +156,14 @@ defmodule MuninWeb.DocumentLive do
       />
     </label>
     """
+  end
+
+  defp review_needed?(doc) do
+    doc.meta["review_needed"] == true or get_in(doc.meta, ["invoice", "review_needed"]) == true
+  end
+
+  defp review_reason(doc) do
+    doc.meta["review_reason"] || get_in(doc.meta, ["invoice", "review_reason"]) || "unverified"
   end
 
   defp doc_size(doc) do

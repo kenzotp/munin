@@ -32,7 +32,9 @@ defmodule MuninWeb.DocumentsLive do
   defp filter_view(docs, "review"), do: Enum.filter(docs, &needs_review?/1)
   defp filter_view(docs, _), do: docs
 
-  defp needs_review?(doc), do: doc.meta["review_needed"] == true
+  defp needs_review?(doc) do
+    doc.meta["review_needed"] == true or get_in(doc.meta, ["invoice", "review_needed"]) == true
+  end
 
   @impl true
   def handle_event("search", %{"q" => q}, socket) do
