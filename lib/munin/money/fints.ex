@@ -13,9 +13,34 @@ defmodule Munin.Money.Fints do
   .env (FINTS_PRODUCT_ID), never in the repo. Open-source rule: each
   self-hoster registers their own free ID at fints.org and sets the same env
   vars; shipping an ID inside the repo is explicitly forbidden by DK.
+
+  Two more things guard against the bank's own fraud/lockout logic:
+
+    * Session state. Every fetch used to run the sidecar's full bootstrap
+      dialog from scratch, which makes the bank register Munin as a brand
+      new customer system each time — believed to cost an extra push
+      notification per fetch. The sidecar's client_state (see
+      `Munin.Money.FintsState`) is round-tripped through every fetch instead,
+      so a returning system is recognized.
+
+    * The lockout latch. If a fetch ever comes back pin_error or locked, the
+      credentials that failed are latched (HMAC, never the PIN itself) and
+      every further `fetch/2` with those same credentials is refused
+      *without* contacting the sidecar — every dialog against the bank is a
+      real attempt, and Sparkasse locks online banking after 3 wrong PINs.
+      The latch clears itself the moment FINTS_LOGIN or FINTS_PIN changes,
+      or by hand via `clear_latch!/0`.
+
+  A process-global lock (`:global.set_lock/3`, zero retries) also makes sure
+  only one fetch runs at a time on this node, across every LiveView and tab —
+  a second attempt while one is in flight is refused immediately rather than
+  opening a second dialog with the bank. The lock is tied to the fetching
+  process and is released automatically if that process dies.
   """
   require Logger
   alias Munin.Money
+  alias Munin.Money.FintsState
+  alias Munin.Repo
 
   # pushTAN approval happens in the banking app and can take a couple of
   # minutes; give the sidecar dialog plenty of room rather than timing out
@@ -23,6 +48,8 @@ defmodule Munin.Money.Fints do
   @receive_timeout :timer.minutes(9)
 
   @env_keys ~w(FINTS_BLZ FINTS_URL FINTS_LOGIN FINTS_PIN FINTS_PRODUCT_ID)
+
+  @lock_resource {__MODULE__, :fetch}
 
   def configured? do
     missing_keys() == []
@@ -37,50 +64,245 @@ defmodule Munin.Money.Fints do
   import, one label per account (content-hash dedupe makes re-fetches a
   no-op).
 
+  Refuses without contacting the sidecar when either guard is up: the
+  current credentials are latched from a previous pin_error/locked response,
+  or another fetch is already running on this node.
+
   Returns `{:ok, %{imported: n, duplicates: n, accounts: [%{label, imported,
   duplicates}], errors: [%{iban, error}]}}` or `{:error, reason}` with a
   human-readable reason.
   """
   def fetch(start_date, end_date \\ nil) do
     if configured?() do
-      end_date = end_date || Date.utc_today()
+      blz = System.get_env("FINTS_BLZ")
+      login = System.get_env("FINTS_LOGIN")
+      pin = System.get_env("FINTS_PIN")
 
-      payload = %{
-        blz: System.get_env("FINTS_BLZ"),
-        url: System.get_env("FINTS_URL"),
-        login: System.get_env("FINTS_LOGIN"),
-        pin: System.get_env("FINTS_PIN"),
-        product_id: System.get_env("FINTS_PRODUCT_ID"),
-        start: Date.to_iso8601(start_date),
-        end: Date.to_iso8601(end_date)
-      }
+      case latch_status(blz, login, pin) do
+        {:latched, reason, _at} ->
+          {:error, latch_message(reason)}
 
-      case Req.post(vision_url("/fints/transactions"),
-             json: payload,
-             receive_timeout: @receive_timeout
-           ) do
-        {:ok, %{status: 200, body: %{"rows" => rows} = body}} ->
-          result = import_grouped(rows, body["accounts"] || [])
-
-          Logger.info(
-            "[fints] imported #{result.imported} (#{result.duplicates} duplicates) " <>
-              "across #{length(result.accounts)} account(s)"
-          )
-
-          {:ok, result}
-
-        {:ok, %{status: status, body: body}} ->
-          msg = error_message(status, body)
-          Logger.warning("[fints] HTTP #{status}: #{msg}")
-          {:error, msg}
-
-        other ->
-          Logger.warning("[fints] unexpected: #{inspect(other)}")
-          {:error, "sidecar unreachable"}
+        :clear ->
+          with_lock(fn -> do_fetch(blz, login, pin, start_date, end_date) end)
       end
     else
       {:error, "FinTS not configured — missing: " <> Enum.join(missing_keys(), ", ")}
     end
+  end
+
+  defp do_fetch(blz, login, pin, start_date, end_date) do
+    end_date = end_date || Date.utc_today()
+
+    payload =
+      %{
+        blz: blz,
+        url: System.get_env("FINTS_URL"),
+        login: login,
+        pin: pin,
+        product_id: System.get_env("FINTS_PRODUCT_ID"),
+        start: Date.to_iso8601(start_date),
+        end: Date.to_iso8601(end_date)
+      }
+      |> maybe_put_client_state(blz, login)
+
+    case Req.post(vision_url("/fints/transactions"),
+           req_opts(json: payload, receive_timeout: @receive_timeout)
+         ) do
+      {:ok, %{status: 200, body: %{"rows" => rows} = body}} ->
+        if state = body["client_state"], do: save_state(blz, login, state)
+        clear_latch!(blz, login)
+
+        result = import_grouped(rows, body["accounts"] || [])
+
+        Logger.info(
+          "[fints] imported #{result.imported} (#{result.duplicates} duplicates) " <>
+            "across #{length(result.accounts)} account(s)"
+        )
+
+        {:ok, result}
+
+      {:ok, %{status: status, body: body}} ->
+        maybe_latch_from_response(blz, login, pin, body)
+        msg = error_message(status, body)
+        Logger.warning("[fints] HTTP #{status}: #{msg}")
+        {:error, msg}
+
+      other ->
+        Logger.warning("[fints] unexpected: #{inspect(other)}")
+        {:error, "sidecar unreachable"}
+    end
+  end
+
+  defp maybe_put_client_state(payload, blz, login) do
+    case get_state(blz, login) do
+      nil -> payload
+      state -> Map.put(payload, :client_state, state)
+    end
+  end
+
+  defp maybe_latch_from_response(blz, login, pin, body) do
+    detail = detail_of(body)
+
+    cond do
+      detail["pin_error"] == true -> latch!(blz, login, pin, "pin_error")
+      detail["locked"] == true -> latch!(blz, login, pin, "locked")
+      true -> :ok
+    end
+  end
+
+  defp detail_of(body) when is_map(body) do
+    case body["detail"] do
+      detail when is_map(detail) -> detail
+      _ -> %{}
+    end
+  end
+
+  defp detail_of(_body), do: %{}
+
+  # --------------------------------------------------------------- locking
+
+  defp with_lock(fun) do
+    # LockRequesterId must be self() — a shared literal makes :global treat
+    # every caller as "the same requester" and let them all through, which
+    # defeats the whole point. self() is also what ties the lock to this
+    # process, so it releases automatically if the process dies.
+    lock_id = {@lock_resource, self()}
+
+    if :global.set_lock(lock_id, [node()], 0) do
+      try do
+        fun.()
+      after
+        :global.del_lock(lock_id, [node()])
+      end
+    else
+      {:error, "a bank fetch is already running"}
+    end
+  end
+
+  # ----------------------------------------------------------------- state
+
+  @doc "The stored client_state for this bank identity, or nil."
+  def get_state(blz, login) do
+    case Repo.get_by(FintsState, identity_hmac: identity_hmac(blz, login)) do
+      nil -> nil
+      row -> row.state
+    end
+  end
+
+  @doc false
+  def save_state(blz, login, state) when is_binary(state) do
+    upsert(identity_hmac(blz, login), %{state: state})
+    :ok
+  end
+
+  @doc """
+  Deletes the stored client_state for this bank identity (the "Reset bank
+  session" action) — the next fetch bootstraps fresh, as if no state had
+  ever been saved. Leaves any lockout latch untouched.
+  """
+  def reset_state!(blz, login) do
+    case Repo.get_by(FintsState, identity_hmac: identity_hmac(blz, login)) do
+      nil -> :ok
+      row -> row |> Ecto.Changeset.change(state: nil) |> Repo.update!() |> then(fn _ -> :ok end)
+    end
+  end
+
+  def reset_state! do
+    reset_state!(System.get_env("FINTS_BLZ"), System.get_env("FINTS_LOGIN"))
+  end
+
+  # ----------------------------------------------------------------- latch
+
+  @doc """
+  :clear, or {:latched, reason, at} when the given credentials exactly match
+  the ones latched from a previous pin_error/locked response. Any credential
+  change (a different HMAC) reads as :clear — the latch never blocks a
+  corrected PIN or login.
+  """
+  def latch_status(blz, login, pin) do
+    case Repo.get_by(FintsState, identity_hmac: identity_hmac(blz, login)) do
+      %FintsState{latch_credential_hmac: hmac, latch_reason: reason, latch_at: at}
+      when is_binary(hmac) ->
+        if hmac == credential_hmac(blz, login, pin) do
+          {:latched, reason, at}
+        else
+          :clear
+        end
+
+      _ ->
+        :clear
+    end
+  end
+
+  def latch_status do
+    latch_status(System.get_env("FINTS_BLZ"), System.get_env("FINTS_LOGIN"), System.get_env("FINTS_PIN"))
+  end
+
+  defp latch!(blz, login, pin, reason) do
+    upsert(identity_hmac(blz, login), %{
+      latch_credential_hmac: credential_hmac(blz, login, pin),
+      latch_reason: reason,
+      latch_at: DateTime.utc_now() |> DateTime.truncate(:second)
+    })
+
+    :ok
+  end
+
+  @doc """
+  Clears the lockout latch — the "I checked the PIN in the banking app"
+  button. Leaves the stored client_state untouched.
+  """
+  def clear_latch!(blz, login) do
+    case Repo.get_by(FintsState, identity_hmac: identity_hmac(blz, login)) do
+      nil ->
+        :ok
+
+      row ->
+        row
+        |> Ecto.Changeset.change(latch_credential_hmac: nil, latch_reason: nil, latch_at: nil)
+        |> Repo.update!()
+        |> then(fn _ -> :ok end)
+    end
+  end
+
+  def clear_latch! do
+    clear_latch!(System.get_env("FINTS_BLZ"), System.get_env("FINTS_LOGIN"))
+  end
+
+  defp latch_message("locked") do
+    "The bank already locked online banking after too many wrong PIN attempts — refusing to " <>
+      "contact it again. Check FINTS_LOGIN/FINTS_PIN in the banking app first, then use " <>
+      "\"I checked the PIN in the banking app\" to allow one more attempt."
+  end
+
+  defp latch_message(_reason) do
+    "The bank rejected these credentials last time — refusing to contact it again. Check " <>
+      "FINTS_LOGIN/FINTS_PIN in the banking app first; Sparkasse locks online banking after " <>
+      "3 wrong PINs. Use \"I checked the PIN in the banking app\" to allow one more attempt."
+  end
+
+  defp upsert(identity_hmac, attrs) do
+    keys = Map.keys(attrs)
+
+    %FintsState{}
+    |> FintsState.changeset(Map.put(attrs, :identity_hmac, identity_hmac))
+    |> Repo.insert!(on_conflict: {:replace, keys}, conflict_target: :identity_hmac)
+  end
+
+  # ------------------------------------------------------------------ hmac
+
+  @doc "HMAC-SHA256(secret_key_base, \"<blz>|<login>\") — a login change starts a fresh row."
+  def identity_hmac(blz, login), do: hmac("#{blz}|#{login}")
+
+  @doc """
+  HMAC-SHA256(secret_key_base, "<blz>|<login>|<pin>") of the credentials that
+  failed. Never the PIN itself, never an unkeyed hash of it.
+  """
+  def credential_hmac(blz, login, pin), do: hmac("#{blz}|#{login}|#{pin}")
+
+  defp hmac(message) do
+    key = MuninWeb.Endpoint.config(:secret_key_base)
+    :crypto.mac(:hmac, :sha256, key, message) |> Base.encode16(case: :lower)
   end
 
   # ------------------------------------------------------------- grouping
@@ -184,6 +406,10 @@ defmodule Munin.Money.Fints do
       iban: r["iban"],
       external_id: r["external_id"]
     }
+  end
+
+  defp req_opts(extra) do
+    Keyword.merge(Application.get_env(:munin, :fints_req_options, []), extra)
   end
 
   defp vision_url(path), do: Path.join(vision_base(), path)

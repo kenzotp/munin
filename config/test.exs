@@ -40,3 +40,8 @@ config :phoenix,
 # Oban is configured in runtime.exs for prod only; without this the app cannot
 # boot under test. :manual inserts jobs without running them.
 config :munin, Oban, testing: :manual, repo: Munin.Repo, name: Oban
+
+# Route Munin.Money.Fints' sidecar HTTP call through Req.Test — tests must
+# never be able to reach a real FinTS sidecar or bank. Stub per test with
+# Req.Test.stub(Munin.Money.Fints, fn conn -> ... end).
+config :munin, :fints_req_options, plug: {Req.Test, Munin.Money.Fints}

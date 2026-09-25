@@ -17,8 +17,12 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fints.client import FinTS3PinTanClient, NeedTANResponse
-from fints.exceptions import FinTSClientPINError, FinTSClientTemporaryAuthError
+from fints.client import SYSTEM_ID_UNASSIGNED, FinTS3PinTanClient, NeedTANResponse
+from fints.exceptions import (
+    FinTSClientPINError,
+    FinTSClientTemporaryAuthError,
+    FinTSDialogInitError,
+)
 from pydantic import BaseModel
 
 VAULT = Path(os.environ.get("VAULT_PATH", "/vault")).resolve()
@@ -109,6 +113,16 @@ def render(body: PathIn):
 # Sparkasse's pushTAN 2.0), where approval happens in the banking app —
 # never a typed TAN. A bank that offers only typed-TAN mechanisms gets a
 # clear tan_required error instead of a prompt this sidecar cannot show.
+#
+# State: python-fints can persist system_id, BPD/UPD and the selected TAN
+# mechanism/medium via client.deconstruct(including_private=True) — never the
+# PIN (see FinTS3Client._deconstruct_v1 / FinTS3PinTanClient._deconstruct_v1
+# in python-fints' client.py). The caller may hand back a previous
+# client_state; when it already names a TAN mechanism, fetch_tan_mechanisms()
+# and TAN-medium selection are skipped, so the bank sees a returning system
+# instead of registering Munin as new on every fetch. On success (and on a
+# TAN timeout, if a system ID has been assigned by then) the response carries
+# the new client_state for the caller to store.
 
 _PIN_BLOCK_MSG = "Refusing to use PIN after block"
 
@@ -121,6 +135,7 @@ class FinTSIn(BaseModel):
     product_id: str
     start: str
     end: str | None = None
+    client_state: str | None = None  # base64 of a previous deconstruct()
 
 
 class _TanTimeout(Exception):
@@ -145,12 +160,26 @@ def _tan_wait_params(mech):
 
 
 def _select_tan_mechanism(client):
-    """Pick a decoupled two-step mechanism and return its parameters object.
+    """Pick a decoupled two-step mechanism and return (parameters, restored).
 
-    Prefers a mechanism whose parameters carry decoupled_max_poll_number,
-    then one whose name mentions "push", else leaves python-fints' own
-    choice (usually the bank's single offered mechanism) untouched.
+    If a restored client_state already named a two-step mechanism (anything
+    but "999", the one-step/no-TAN placeholder), that choice is trusted as-is
+    and fetch_tan_mechanisms() — the bootstrap that makes the bank register a
+    new customer system — is skipped entirely, `restored` is True.
+
+    Otherwise this is today's behaviour: fetch_tan_mechanisms(), then prefer
+    a mechanism whose parameters carry decoupled_max_poll_number, then one
+    whose name mentions "push", else leave python-fints' own choice (usually
+    the bank's single offered mechanism) untouched. `restored` is False.
     """
+    current = client.get_current_tan_mechanism()
+    if current and current != "999":
+        mechs = client.get_tan_mechanisms()
+        if current in mechs:
+            return mechs[current], True
+        # Named a mechanism the (offline) BPD doesn't know — treat as if no
+        # mechanism had been restored and fall through to a full fetch.
+
     client.fetch_tan_mechanisms()
     mechs = client.get_tan_mechanisms()
     candidates = {k: m for k, m in mechs.items() if k != "999"}
@@ -159,7 +188,7 @@ def _select_tan_mechanism(client):
     chosen = next(iter(decoupled), None) or next(iter(push), None)
     if chosen is not None:
         client.set_tan_mechanism(chosen)
-    return mechs.get(client.get_current_tan_mechanism())
+    return mechs.get(client.get_current_tan_mechanism()), False
 
 
 def _select_tan_medium(client):
@@ -170,6 +199,15 @@ def _select_tan_medium(client):
         client.selected_tan_medium = ""
     else:
         client.set_tan_medium(media[0])  # one medium, or several → the first
+
+
+def _client_state(client) -> str | None:
+    """Base64 of deconstruct(including_private=True), or None if no system ID
+    has been assigned yet (nothing useful to restore later)."""
+    system_id = getattr(client, "system_id", None)
+    if not system_id or system_id == SYSTEM_ID_UNASSIGNED:
+        return None
+    return base64.b64encode(client.deconstruct(including_private=True)).decode()
 
 
 def _resolve_tan(client, mech, response):
@@ -213,7 +251,7 @@ def fints_transactions(body: FinTSIn):
     start = dt.date.fromisoformat(body.start)
     end = dt.date.fromisoformat(body.end) if body.end else dt.date.today()
 
-    def bail(e: Exception):
+    def bail(e: Exception, client=None, restored: bool = False):
         if isinstance(e, FinTSClientTemporaryAuthError):
             raise HTTPException(
                 status_code=502, detail={"error": "online banking is locked", "locked": True}
@@ -223,30 +261,45 @@ def fints_transactions(body: FinTSIn):
                 status_code=502,
                 detail={"error": "bank rejected the PIN or login", "pin_error": True},
             )
-        raise HTTPException(status_code=502, detail={"error": str(e) or e.__class__.__name__})
+        detail = {"error": str(e) or e.__class__.__name__}
+        if restored and isinstance(e, FinTSDialogInitError):
+            # The one python-fints exception raised specifically when dialog
+            # initialization — the step that submits the restored system ID —
+            # fails for a reason that isn't already a PIN or lock error above.
+            # Only set when we actually skipped the bootstrap on a restored
+            # client_state; never retried here, just flagged for the caller.
+            detail["state_invalid"] = True
+        raise HTTPException(status_code=502, detail=detail)
 
-    def bail_tan(e: Exception):
+    def bail_tan(e: Exception, client=None):
+        state = _client_state(client) if client is not None else None
+        extra = {"client_state": state} if state else {}
         if isinstance(e, _TypedTanRequired):
             raise HTTPException(
                 status_code=502,
                 detail={
                     "error": "the bank asked for a typed TAN; only app-approval pushTAN is supported",
                     "tan_required": True,
+                    **extra,
                 },
             )
         raise HTTPException(
             status_code=502,
-            detail={"error": "approval was not given in time", "tan_timeout": True},
+            detail={"error": "approval was not given in time", "tan_timeout": True, **extra},
         )
 
+    client = None
+    restored_from_state = False
     try:
+        kwargs = {"from_data": base64.b64decode(body.client_state)} if body.client_state else {}
         client = FinTS3PinTanClient(
-            body.blz, body.login, body.pin, body.url, product_id=body.product_id
+            body.blz, body.login, body.pin, body.url, product_id=body.product_id, **kwargs
         )
-        mech = _select_tan_mechanism(client)
-        _select_tan_medium(client)
+        mech, restored_from_state = _select_tan_mechanism(client)
+        if not restored_from_state:
+            _select_tan_medium(client)
     except Exception as e:
-        bail(e)
+        bail(e, client=client, restored=restored_from_state)
 
     rows: list[dict] = []
     accounts_report: list[dict] = []
@@ -257,12 +310,12 @@ def fints_transactions(body: FinTSIn):
                 try:
                     _resolve_tan(client, mech, client.init_tan_response)
                 except (_TanTimeout, _TypedTanRequired) as e:
-                    bail_tan(e)
+                    bail_tan(e, client=client)
 
             try:
                 accounts = _resolve_tan(client, mech, client.get_sepa_accounts())
             except (_TanTimeout, _TypedTanRequired) as e:
-                bail_tan(e)
+                bail_tan(e, client=client)
 
             for acc in accounts:
                 iban = getattr(acc, "iban", None) or getattr(acc, "accountnumber", None) or ""
@@ -281,8 +334,12 @@ def fints_transactions(body: FinTSIn):
     except HTTPException:
         raise
     except (_TanTimeout, _TypedTanRequired) as e:
-        bail_tan(e)
+        bail_tan(e, client=client)
     except Exception as e:
-        bail(e)
+        bail(e, client=client, restored=restored_from_state)
 
-    return {"rows": rows, "accounts": accounts_report}
+    result = {"rows": rows, "accounts": accounts_report}
+    state = _client_state(client)
+    if state:
+        result["client_state"] = state
+    return result

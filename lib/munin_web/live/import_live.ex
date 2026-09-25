@@ -5,6 +5,7 @@ defmodule MuninWeb.ImportLive do
   """
   use MuninWeb, :live_view
   alias Munin.Money
+  alias Munin.Money.Fints
 
   @impl true
   def mount(_params, _session, socket) do
@@ -15,11 +16,16 @@ defmodule MuninWeb.ImportLive do
        account: "Sparkasse",
        result: nil,
        simulated: Money.simulated?(),
-       fints_configured: Munin.Money.Fints.configured?(),
-       fints_missing: Munin.Money.Fints.missing_keys(),
+       fints_configured: Fints.configured?(),
+       fints_missing: Fints.missing_keys(),
        fints_days: "90",
-       fints_busy: false
+       fints_busy: false,
+       fints_latch: fints_latch()
      )}
+  end
+
+  defp fints_latch do
+    if Fints.configured?(), do: Fints.latch_status(), else: :clear
   end
 
   @impl true
@@ -73,29 +79,46 @@ defmodule MuninWeb.ImportLive do
       {:noreply,
        socket
        |> assign(fints_busy: true)
-       |> start_async(:fints_fetch, fn -> Munin.Money.Fints.fetch(start_date) end)}
+       |> start_async(:fints_fetch, fn -> Fints.fetch(start_date) end)}
     end
+  end
+
+  def handle_event("fints_reset_state", _, socket) do
+    Fints.reset_state!()
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Bank session reset — the next fetch starts fresh.")}
+  end
+
+  def handle_event("fints_clear_latch", _, socket) do
+    Fints.clear_latch!()
+
+    {:noreply,
+     socket
+     |> assign(fints_latch: :clear)
+     |> put_flash(:info, "Latch cleared — one fetch attempt is allowed.")}
   end
 
   @impl true
   def handle_async(:fints_fetch, {:ok, {:ok, result}}, socket) do
     {:noreply,
      socket
-     |> assign(fints_busy: false)
+     |> assign(fints_busy: false, fints_latch: fints_latch())
      |> put_flash(:info, fints_flash_message(result))}
   end
 
   def handle_async(:fints_fetch, {:ok, {:error, reason}}, socket) do
     {:noreply,
      socket
-     |> assign(fints_busy: false)
+     |> assign(fints_busy: false, fints_latch: fints_latch())
      |> put_flash(:error, "FinTS: " <> reason)}
   end
 
   def handle_async(:fints_fetch, {:exit, reason}, socket) do
     {:noreply,
      socket
-     |> assign(fints_busy: false)
+     |> assign(fints_busy: false, fints_latch: fints_latch())
      |> put_flash(:error, "FinTS: fetch crashed (#{inspect(reason)}).")}
   end
 
@@ -110,6 +133,14 @@ defmodule MuninWeb.ImportLive do
   end
 
   defp reload_flag(socket), do: assign(socket, simulated: Money.simulated?())
+
+  defp fints_latch_reason_label("locked"), do: "the bank locked online banking"
+  defp fints_latch_reason_label(_), do: "the bank rejected the PIN or login"
+
+  defp fints_latch_age(%DateTime{} = at),
+    do: " at " <> Calendar.strftime(at, "%Y-%m-%d %H:%M UTC")
+
+  defp fints_latch_age(_), do: ""
 
   @impl true
   def render(assigns) do
@@ -137,15 +168,32 @@ defmodule MuninWeb.ImportLive do
               Waiting for approval — open the S-pushTAN app and approve the push now.
             </p>
           <% end %>
+          <%= if match?({:latched, _, _}, @fints_latch) do %>
+            <% {:latched, reason, at} = @fints_latch %>
+            <div class="rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-3 mb-3 text-sm text-red-700 dark:text-red-300">
+              <p class="font-semibold mb-1">Bank fetch blocked — <%= fints_latch_reason_label(reason) %></p>
+              <p class="mb-2">
+                Latched<%= fints_latch_age(at) %>. Check FINTS_LOGIN/FINTS_PIN in the banking app before retrying — Sparkasse locks online banking after 3 wrong PINs.
+              </p>
+              <button phx-click="fints_clear_latch"
+                class="rounded-lg border border-red-400 dark:border-red-700 px-3 py-1.5 text-sm hover:bg-red-100 dark:hover:bg-red-900/40">
+                I checked the PIN in the banking app — allow one attempt
+              </button>
+            </div>
+          <% end %>
           <form phx-submit="fints" class="flex items-center gap-2">
             <input type="number" name="days" min="1" max="720" value={@fints_days} disabled={@fints_busy}
               class="w-24 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm" />
             <span class="text-sm text-zinc-500">days back</span>
-            <button type="submit" disabled={@fints_busy}
+            <button type="submit" disabled={@fints_busy or match?({:latched, _, _}, @fints_latch)}
               class="rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold px-4 py-2 text-sm">
               <%= if @fints_busy, do: "Waiting for approval…", else: "Fetch statements" %>
             </button>
           </form>
+          <button phx-click="fints_reset_state"
+            class="mt-2 text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 underline">
+            Reset bank session
+          </button>
         <% else %>
           <p class="text-sm text-zinc-500 dark:text-zinc-400">
             Waiting for credentials. Set <code class="text-zinc-400"><%= Enum.join(@fints_missing, ", ") %></code> in .env
