@@ -36,3 +36,7 @@ config :phoenix_live_view,
 # Sort query params output of verified routes for robust url comparisons
 config :phoenix,
   sort_verified_routes_query_params: true
+
+# Oban is configured in runtime.exs for prod only; without this the app cannot
+# boot under test. :manual inserts jobs without running them.
+config :munin, Oban, testing: :manual, repo: Munin.Repo, name: Oban
