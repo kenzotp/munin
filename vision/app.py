@@ -6,13 +6,19 @@
 #   POST /extract  {path}  → {text, reader, pages}   embedded text layer (pypdf)
 #                                                     or office/html text (markitdown)
 #   POST /render   {path}  → {pages: [{n, jpeg_base64}]}  capped page renders (pymupdf)
+#   POST /fints/transactions  {blz,url,login,pin,product_id,start,end}
+#        → {rows, accounts}   read-only FinTS statement fetch (python-fints)
 #
 # Originals are opened read-only; nothing here ever writes to a document.
 import base64
+import datetime as dt
 import os
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fints.client import FinTS3PinTanClient, NeedTANResponse
+from fints.exceptions import FinTSClientPINError, FinTSClientTemporaryAuthError
 from pydantic import BaseModel
 
 VAULT = Path(os.environ.get("VAULT_PATH", "/vault")).resolve()
@@ -93,9 +99,19 @@ def render(body: PathIn):
 
 
 # ---------------------------------------------------------------- FinTS (P3)
-# Read-only statement fetch. Credentials arrive per-request from the web app's
-# env; nothing is logged or persisted here. The DK product registration ID
-# must never be shipped in a public repo — each self-hoster registers their own.
+# Read-only statement fetch via get_transactions (HKKAZ) — never the HKEKA
+# PDF API. Credentials arrive per-request from the web app's env; nothing
+# here is ever logged or returned in a response. The DK product registration
+# ID identifies MUNIN to the banks — each self-hoster registers their own
+# free ID at fints.org; shipping one in a public repo is forbidden by DK.
+#
+# SCA: this sidecar only supports a decoupled two-step mechanism (e.g.
+# Sparkasse's pushTAN 2.0), where approval happens in the banking app —
+# never a typed TAN. A bank that offers only typed-TAN mechanisms gets a
+# clear tan_required error instead of a prompt this sidecar cannot show.
+
+_PIN_BLOCK_MSG = "Refusing to use PIN after block"
+
 
 class FinTSIn(BaseModel):
     blz: str
@@ -107,57 +123,166 @@ class FinTSIn(BaseModel):
     end: str | None = None
 
 
+class _TanTimeout(Exception):
+    """Approval was not given within the mechanism's poll budget."""
+
+
+class _TypedTanRequired(Exception):
+    """The bank wants a typed TAN; only app-approval pushTAN is supported."""
+
+
+def _tan_wait_params(mech):
+    """(wait_before_first_poll, wait_before_next_poll, decoupled_max_poll_number),
+    defaulting to 5s / 2s / 60 polls when the mechanism leaves one unset."""
+    first = getattr(mech, "wait_before_first_poll", None)
+    nxt = getattr(mech, "wait_before_next_poll", None)
+    max_polls = getattr(mech, "decoupled_max_poll_number", None)
+    return (
+        int(first) if first is not None else 5,
+        int(nxt) if nxt is not None else 2,
+        int(max_polls) if max_polls is not None else 60,
+    )
+
+
+def _select_tan_mechanism(client):
+    """Pick a decoupled two-step mechanism and return its parameters object.
+
+    Prefers a mechanism whose parameters carry decoupled_max_poll_number,
+    then one whose name mentions "push", else leaves python-fints' own
+    choice (usually the bank's single offered mechanism) untouched.
+    """
+    client.fetch_tan_mechanisms()
+    mechs = client.get_tan_mechanisms()
+    candidates = {k: m for k, m in mechs.items() if k != "999"}
+    decoupled = [k for k, m in candidates.items() if getattr(m, "decoupled_max_poll_number", None)]
+    push = [k for k, m in candidates.items() if "push" in (m.name or "").lower()]
+    chosen = next(iter(decoupled), None) or next(iter(push), None)
+    if chosen is not None:
+        client.set_tan_mechanism(chosen)
+    return mechs.get(client.get_current_tan_mechanism())
+
+
+def _select_tan_medium(client):
+    if not client.is_tan_media_required():
+        return
+    _, media = client.get_tan_media()
+    if len(media) == 0:
+        client.selected_tan_medium = ""
+    else:
+        client.set_tan_medium(media[0])  # one medium, or several → the first
+
+
+def _resolve_tan(client, mech, response):
+    """Resolve a (possible) NeedTANResponse via decoupled polling."""
+    if not isinstance(response, NeedTANResponse):
+        return response
+    if not response.decoupled:
+        raise _TypedTanRequired()
+    first_wait, next_wait, max_polls = _tan_wait_params(mech)
+    time.sleep(first_wait)
+    for _ in range(max_polls):
+        response = client.send_tan(response, "")
+        if not isinstance(response, NeedTANResponse):
+            return response
+        time.sleep(next_wait)
+    raise _TanTimeout()
+
+
+def _is_pin_error(e: Exception) -> bool:
+    return isinstance(e, FinTSClientPINError) or _PIN_BLOCK_MSG in str(e)
+
+
+def _row(tx, iban: str) -> dict:
+    data = tx.data
+    amount = data.get("amount")
+    cents = int((amount.amount * 100).to_integral_value()) if amount is not None else 0
+    booked = data.get("date") or data.get("entry_date")
+    ext = (data.get("end_to_end_reference") or "").strip()
+    return {
+        "iban": iban,
+        "booked_at": booked.isoformat() if booked else "",
+        "amount_cents": cents,
+        "payer": data.get("applicant_name") or data.get("posting_text") or "",
+        "description": data.get("purpose") or "",
+        "external_id": None if (not ext or ext.upper() == "NOTPROVIDED") else ext,
+    }
+
+
 @app.post("/fints/transactions")
 def fints_transactions(body: FinTSIn):
-    import datetime as dt
-
-    from fints.client import FinTS3PinTanClient
-
     start = dt.date.fromisoformat(body.start)
     end = dt.date.fromisoformat(body.end) if body.end else dt.date.today()
 
-    def tan_err(e: Exception) -> bool:
-        msg = str(e) or ""
-        return "tan" in msg.lower() or "3920" in msg or "NeedTAN" in e.__class__.__name__
+    def bail(e: Exception):
+        if isinstance(e, FinTSClientTemporaryAuthError):
+            raise HTTPException(
+                status_code=502, detail={"error": "online banking is locked", "locked": True}
+            )
+        if _is_pin_error(e):
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "bank rejected the PIN or login", "pin_error": True},
+            )
+        raise HTTPException(status_code=502, detail={"error": str(e) or e.__class__.__name__})
+
+    def bail_tan(e: Exception):
+        if isinstance(e, _TypedTanRequired):
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "the bank asked for a typed TAN; only app-approval pushTAN is supported",
+                    "tan_required": True,
+                },
+            )
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "approval was not given in time", "tan_timeout": True},
+        )
 
     try:
         client = FinTS3PinTanClient(
             body.blz, body.login, body.pin, body.url, product_id=body.product_id
         )
-        accounts = client.get_sepa_accounts()
+        mech = _select_tan_mechanism(client)
+        _select_tan_medium(client)
     except Exception as e:
-        raise HTTPException(
-            status_code=502,
-            detail={"error": str(e) or e.__class__.__name__, "tan_required": tan_err(e)},
-        )
+        bail(e)
 
-    rows = []
-    per_account = []
-    for acc in accounts:
-        per_account.append(f"{getattr(acc, 'iban', None) or getattr(acc, 'accountnumber', '?')} ({acc.type})")
-        try:
-            statement = client.get_statement(full_account_ref=acc, start_date=start, end_date=end)
-        except Exception as e:
-            if tan_err(e):
-                raise HTTPException(status_code=502, detail={"error": str(e) or e.__class__.__name__, "tan_required": True})
-            continue  # skip an account that won't play; fetch the rest
+    rows: list[dict] = []
+    accounts_report: list[dict] = []
 
-        for tx in statement:
-            data = tx.data
-            amount = data.get("amount")
-            cents = int(round(float(amount.value) * 100)) if amount is not None else 0
-            purpose = " ".join(data.get("purpose") or [])
-            ext = data.get("id") or data.get("end_to_endreference") or None
-            iban = getattr(acc, "iban", None)
-            rows.append(
-                {
-                    "booked_at": str(data.get("date") or data.get("entry_date") or ""),
-                    "amount_cents": cents,
-                    "payer": data.get("applicant_name") or data.get("posting_text") or "",
-                    "description": purpose,
-                    "iban": iban,
-                    "external_id": f"{iban}:{ext}" if (iban and ext) else None,
-                }
-            )
+    try:
+        with client:
+            if client.init_tan_response:
+                try:
+                    _resolve_tan(client, mech, client.init_tan_response)
+                except (_TanTimeout, _TypedTanRequired) as e:
+                    bail_tan(e)
 
-    return {"rows": rows, "accounts": per_account}
+            try:
+                accounts = _resolve_tan(client, mech, client.get_sepa_accounts())
+            except (_TanTimeout, _TypedTanRequired) as e:
+                bail_tan(e)
+
+            for acc in accounts:
+                iban = getattr(acc, "iban", None) or getattr(acc, "accountnumber", None) or ""
+                try:
+                    txs = _resolve_tan(client, mech, client.get_transactions(acc, start, end))
+                except (_TanTimeout, _TypedTanRequired):
+                    raise
+                except Exception as e:
+                    if isinstance(e, FinTSClientTemporaryAuthError) or _is_pin_error(e):
+                        raise
+                    accounts_report.append({"iban": iban, "error": str(e) or e.__class__.__name__})
+                    continue
+
+                accounts_report.append({"iban": iban, "rows": len(txs)})
+                rows.extend(_row(tx, iban) for tx in txs)
+    except HTTPException:
+        raise
+    except (_TanTimeout, _TypedTanRequired) as e:
+        bail_tan(e)
+    except Exception as e:
+        bail(e)
+
+    return {"rows": rows, "accounts": accounts_report}

@@ -430,7 +430,7 @@ defmodule Munin.Money do
 
   defp normal_payee(t), do: String.slice(t.payer || t.description || "?", 0, 26)
 
-  @doc "Same payer, same amount, seen in >= 3 distinct months → probably a subscription."
+  # Same payer, same amount, seen in >= 3 distinct months → probably a subscription.
   defp subscriptions(lines) do
     lines
     |> Enum.filter(&(&1.amount_cents < 0))
@@ -443,7 +443,7 @@ defmodule Munin.Money do
     |> Enum.sort_by(& &1.cents)
   end
 
-  @doc "Business spend without a matching document — receipts you should dig up."
+  # Business spend without a matching document — receipts you should dig up.
   defp missing_receipts(lines) do
     lines
     |> Enum.filter(&(&1.amount_cents < 0 and &1.scope == "business" and is_nil(&1.matched_document_id) and &1.category not in ["fees"]))
