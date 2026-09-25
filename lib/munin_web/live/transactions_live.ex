@@ -16,8 +16,7 @@ defmodule MuninWeb.TransactionsLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok,
-     assign(socket, page_title: "Transactions", q: "", scope: "all", account: "all") |> reload()}
+    {:ok, assign(socket, page_title: "Transactions", q: "", scope: "all", account: "all") |> reload()}
   end
 
   @impl true
@@ -32,7 +31,7 @@ defmodule MuninWeb.TransactionsLive do
   end
 
   defp reload(%{assigns: %{q: q, scope: scope, account: account}} = socket) do
-    lines = Munin.Money.list_transactions(q, scope, account, 300)
+    lines = q |> Munin.Money.list_transactions(scope, account, 300) |> Munin.Repo.all()
 
     queue =
       Munin.Money.unmatched_docs()
@@ -45,6 +44,7 @@ defmodule MuninWeb.TransactionsLive do
     socket
     |> assign(
       categories: @categories,
+      queue: queue,
       auto: auto,
       total: Munin.Repo.aggregate(Munin.Money.Transaction, :count, :id),
       accounts: Munin.Money.accounts(),
@@ -59,8 +59,7 @@ defmodule MuninWeb.TransactionsLive do
   def handle_event("search", %{"q" => q}, socket) do
     {:noreply,
      push_patch(socket,
-       to:
-         ~p"/money/tx?#{%{q: String.trim(q), scope: socket.assigns.scope, account: socket.assigns.account}}"
+       to: ~p"/money/tx?#{%{q: String.trim(q), scope: socket.assigns.scope, account: socket.assigns.account}}"
      )}
   end
 
@@ -100,10 +99,7 @@ defmodule MuninWeb.TransactionsLive do
 
         {:noreply,
          socket
-         |> put_flash(
-           :info,
-           "Rule \"#{rule.pattern} → #{rule.scope}/#{rule.category}\" — #{n} line(s) re-classified."
-         )
+         |> put_flash(:info, "Rule \"#{rule.pattern} → #{rule.scope}/#{rule.category}\" — #{n} line(s) re-classified.")
          |> reload()}
 
       {:error, _cs} ->
@@ -129,9 +125,7 @@ defmodule MuninWeb.TransactionsLive do
   def handle_event("mark_all_transfers", _, socket) do
     pairs = Munin.Money.transfer_candidates()
     Enum.each(pairs, fn {out, inn} -> Munin.Money.mark_transfer!(out.id, inn.id) end)
-
-    {:noreply,
-     socket |> put_flash(:info, "Marked #{length(pairs)} transfer pair(s).") |> reload()}
+    {:noreply, socket |> put_flash(:info, "Marked #{length(pairs)} transfer pair(s).") |> reload()}
   end
 
   def handle_event("toggle_transfer", %{"id" => id}, socket) do
