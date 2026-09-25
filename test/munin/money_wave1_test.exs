@@ -13,14 +13,7 @@ defmodule Munin.Money.Wave1Test do
   end
 
   defp row(date, cents, payer, desc \\ "Zeile") do
-    %{
-      booked_at: date,
-      amount_cents: cents,
-      payer: payer,
-      description: desc,
-      iban: nil,
-      external_id: nil
-    }
+    %{booked_at: date, amount_cents: cents, payer: payer, description: desc, iban: nil, external_id: nil}
   end
 
   # ------------------------------------------------------------------ format
@@ -39,13 +32,7 @@ defmodule Munin.Money.Wave1Test do
   # ------------------------------------------------------------------- rules
 
   test "a learned rule wins over built-in classification at import" do
-    {:ok, _} =
-      Money.create_rule(%{
-        kind: "classify",
-        pattern: "shell",
-        category: "transport",
-        scope: "business"
-      })
+    {:ok, _} = Money.create_rule(%{kind: "classify", pattern: "shell", category: "transport", scope: "business"})
 
     Money.import_rows("T1", [row(~D[2026-09-01], -7_210, "SHELL TANKSTELLE", "Kraftstoff")])
     [t] = Munin.Repo.all(Munin.Money.Transaction)
@@ -64,23 +51,12 @@ defmodule Munin.Money.Wave1Test do
     t2 = Munin.Repo.get_by!(Munin.Money.Transaction, payer: "SOMETHING ELSE")
     Munin.Repo.update!(Ecto.Changeset.change(t2, scope: "business"))
 
-    {:ok, _} =
-      Money.create_rule(%{
-        kind: "classify",
-        pattern: "shell",
-        category: "transport",
-        scope: "business"
-      })
-
+    {:ok, _} = Money.create_rule(%{kind: "classify", pattern: "shell", category: "transport", scope: "business"})
     n = Money.apply_rules!()
 
     assert n == 1
-
-    assert Munin.Repo.get_by!(Munin.Money.Transaction, payer: "SHELL TANKSTELLE").scope ==
-             "business"
-
-    assert Munin.Repo.get_by!(Munin.Money.Transaction, payer: "SOMETHING ELSE").scope ==
-             "business"
+    assert Munin.Repo.get_by!(Munin.Money.Transaction, payer: "SHELL TANKSTELLE").scope == "business"
+    assert Munin.Repo.get_by!(Munin.Money.Transaction, payer: "SOMETHING ELSE").scope == "business"
   end
 
   test "rule_from_line creates a rule from a stored line and applies it" do
@@ -96,9 +72,7 @@ defmodule Munin.Money.Wave1Test do
     assert {:ok, rule} = Money.rule_from_line(Munin.Repo.reload(t))
     assert rule.pattern == "DATENWERK NORD"
     assert Money.apply_rules!() == 1
-
-    assert Munin.Repo.get_by!(Munin.Money.Transaction, booked_at: ~D[2026-08-04]).scope ==
-             "business"
+    assert Munin.Repo.get_by!(Munin.Money.Transaction, booked_at: ~D[2026-08-04]).scope == "business"
   end
 
   # --------------------------------------------------------------- transfers
@@ -133,13 +107,33 @@ defmodule Munin.Money.Wave1Test do
 
     Money.import_rows("SUBS", rows)
     subs = Money.subscription_detail()
-    s = Enum.find(subs, &(&1.payee == "TEST ABO GMBH"))
+    s = Enum.find(subs, &(&1.payee == "TEST ABO"))
 
     assert s
     assert s.interval == 1
-    assert s.charge_cents == -1_999
+    assert s.charge_cents == -999
     assert s.next_charge
     assert s.hike == %{from: -999, to: -1_999}
+  end
+
+  test "amount-varied merchants are not subscriptions" do
+    Money.import_rows("SUBS4", [
+      row(month_date(2, 3), -4_123, "EDEKA MARKT BONN", "Lebensmittel"),
+      row(month_date(1, 7), -8_811, "EDEKA MARKT BONN", "Lebensmittel"),
+      row(month_date(0, 2), -2_745, "EDEKA MARKT BONN", "Lebensmittel")
+    ])
+
+    refute Enum.any?(Money.subscription_detail(), &String.contains?(&1.payee, "EDEKA"))
+  end
+
+  test "bank statement noise never shows up as a subscription" do
+    Money.import_rows("SUBS5", [
+      row(month_date(2, 3), -599, "SPARKASSE", "Entgeltabschluss"),
+      row(month_date(1, 3), -599, "SPARKASSE", "Entgeltabschluss"),
+      row(month_date(0, 3), -599, "SPARKASSE", "Entgeltabschluss")
+    ])
+
+    refute Enum.any?(Money.subscription_detail(), &String.contains?(&1.payee, "SPARKASSE"))
   end
 
   test "yearly recurrence (2 charges ~12 months apart) is detected" do
