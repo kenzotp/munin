@@ -13,6 +13,7 @@ defmodule Munin.Money do
   import Ecto.Query
   alias Munin.Repo
   alias Munin.Money.Transaction
+  alias Munin.Money.Rule
   alias Munin.Documents.Document
   require Logger
 
@@ -20,26 +21,126 @@ defmodule Munin.Money do
 
   @rules [
     {"income", "business", ["zuuna"]},
-    {"saas", "business", ["openrouter", "openai", "anthropic", "github", "jetbrains", "figma", "notion", "aws", "amazon web services", "hetzner", "netcup", "namecheap", "cloudflare", "stripe fee", "unpkg"]},
-    {"fees", "business", ["gebühr", "entgelt", "kartenpflege", "kontoführung", "rücklastschrift"]},
+    {"saas", "business",
+     [
+       "openrouter",
+       "openai",
+       "anthropic",
+       "github",
+       "jetbrains",
+       "figma",
+       "notion",
+       "aws",
+       "amazon web services",
+       "hetzner",
+       "netcup",
+       "namecheap",
+       "cloudflare",
+       "stripe fee",
+       "unpkg"
+     ]},
+    {"fees", "business",
+     ["gebühr", "entgelt", "kartenpflege", "kontoführung", "rücklastschrift"]},
     {"hardware", "business", ["conrad", "alternate", "mindfactory", "caseking", "reichelt"]},
     {"insurance", "private", ["versicherung", "krankenkasse", "barmer", "allianz", "huk"]},
     {"rent", "private", ["miete"]},
-    {"groceries", "private", ["edeka", "rewe", "lidl", "aldi", "penny", "netto", "kaufland", "dm ", "rossmann"]},
-    {"transport", "private", ["db vertrieb", "bahn", "deutschlandticket", "shell", "aral", "esso", "deutschebahn"]},
+    {"groceries", "private",
+     ["edeka", "rewe", "lidl", "aldi", "penny", "netto", "kaufland", "dm ", "rossmann"]},
+    {"transport", "private",
+     ["db vertrieb", "bahn", "deutschlandticket", "shell", "aral", "esso", "deutschebahn"]},
     {"health", "private", ["apotheke", "zahnarzt", "praxis"]},
     {"subscriptions", "private", ["netflix", "spotify", "disney", "steam"]},
-    {"dining", "private", ["restaurant", "gasthaus", "mcdonald", "burger", "pizza", "eiscafé", "café"]}
+    {"dining", "private",
+     ["restaurant", "gasthaus", "mcdonald", "burger", "pizza", "eiscafé", "café"]}
   ]
 
-  @doc "Keyword rules → {category, scope}. First hit wins; default other/private."
-  def classify(%{} = row) do
+  def list_rules do
+    Repo.all(from(r in Rule, order_by: [asc: r.kind, asc: r.inserted_at]))
+  end
+
+  def create_rule(attrs) do
+    %Rule{}
+    |> Rule.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  def delete_rule!(id), do: Repo.delete!(Repo.get!(Rule, id))
+
+  @doc """
+  One click from a bank line: remember "this payee → this category + scope"
+  and use it for every future import. The pattern is the normalized payee.
+  """
+  def rule_from_line(%Transaction{} = t) do
+    pattern =
+      case rule_pattern(t) do
+        "" -> String.slice(t.description || "", 0, 30)
+        p -> p
+      end
+
+    %Rule{}
+    |> Rule.changeset(%{kind: "classify", pattern: pattern, category: t.category, scope: t.scope})
+    |> Repo.insert()
+  end
+
+  defp rule_pattern(t) do
+    (t.payer || "")
+    |> String.upcase()
+    |> String.replace(~r/\d{4,}/, " ")
+    |> String.split(~r/[^A-Z0-9&.]+/)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.take(2)
+    |> Enum.join(" ")
+  end
+
+  def classify_rules do
+    Repo.all(from(r in Rule, where: r.kind == "classify", order_by: [asc: r.inserted_at]))
+  end
+
+  defp ignore_patterns do
+    Repo.all(from(r in Rule, where: r.kind == "ignore_sub", select: r.pattern))
+    |> Enum.map(&String.downcase/1)
+  end
+
+  @doc "Keyword rules → {category, scope}. DB rules first, then built-ins; default other/private."
+  def classify(%{} = row), do: classify_with(classify_rules(), row)
+
+  def classify_with(rules, row) do
     hay = String.downcase((row[:payer] || "") <> " " <> (row[:description] || ""))
+
+    case Enum.find(rules, &String.contains?(hay, String.downcase(&1.pattern))) do
+      %Rule{} = r ->
+        row |> Map.put(:category, r.category || "other") |> Map.put(:scope, r.scope || "private")
+
+      nil ->
+        builtin_classify(row)
+    end
+  end
+
+  # The classification a DB rule alone produces — nil when no rule matches.
+  # apply_rules!/0 uses this so manual overrides that no rule covers survive.
+  defp classify_rule_only(rules, row) do
+    hay = String.downcase((row[:payer] || "") <> " " <> (row[:description] || ""))
+
+    case Enum.find(rules, &String.contains?(hay, String.downcase(&1.pattern))) do
+      %Rule{} = r -> {r.category || "other", r.scope || "private"}
+      nil -> nil
+    end
+  end
+
+  defp builtin_classify(row) do
+    hay = String.downcase((row[:payer] || "") <> " " <> (row[:description] || ""))
+
     hit =
       Enum.find(@rules, fn {_cat, _scope, kws} -> Enum.any?(kws, &String.contains?(hay, &1)) end)
+
     case hit do
-      {cat, scope, _} -> row |> Map.put(:category, cat) |> Map.put(:scope, scope)
-      nil -> row |> Map.put(:category, if(row.amount_cents >= 0, do: "income", else: "other")) |> Map.put(:scope, "private")
+      {cat, scope, _} ->
+        row |> Map.put(:category, cat) |> Map.put(:scope, scope)
+
+      nil ->
+        row
+        |> Map.put(:category, if(row.amount_cents >= 0, do: "income", else: "other"))
+        |> Map.put(:scope, "private")
     end
   end
 
@@ -52,11 +153,14 @@ defmodule Munin.Money do
   """
   def import_rows(account, rows, source \\ "csv") do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
+    rules = classify_rules()
+
     maps =
       rows
-      |> Enum.map(&classify/1)
+      |> Enum.map(&classify_with(rules, &1))
       |> Enum.map(fn r ->
         hash = hash_line(account, r)
+
         %{
           id: Ecto.UUID.generate(),
           account: account,
@@ -85,6 +189,34 @@ defmodule Munin.Money do
     {imported, max(length(rows) - imported, 0)}
   end
 
+  @doc """
+  Replay the learned classify rules over every stored line. Only lines a rule
+  actually matches are touched — manual edits that no rule covers survive.
+  Returns the number of updated lines.
+  """
+  def apply_rules! do
+    rules = classify_rules()
+
+    if rules == [] do
+      0
+    else
+      Repo.all(Transaction)
+      |> Enum.map(fn t ->
+        row = %{payer: t.payer, description: t.description, amount_cents: t.amount_cents}
+
+        case classify_rule_only(rules, row) do
+          {cat, scope} when cat != t.category or scope != t.scope -> {t, cat, scope}
+          _ -> nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.reduce(0, fn {t, cat, scope}, acc ->
+        Repo.update!(Ecto.Changeset.change(t, category: cat, scope: scope))
+        acc + 1
+      end)
+    end
+  end
+
   defp hash_line(account, r) do
     :sha256
     |> :crypto.hash(
@@ -94,32 +226,50 @@ defmodule Munin.Money do
   end
 
   def simulated? do
-    Repo.exists?(from t in Transaction, where: t.source == "simulated")
+    Repo.exists?(from(t in Transaction, where: t.source == "simulated"))
   end
 
-  def list_transactions(q, scope, limit) do
+  def list_transactions(q, scope, account, limit) do
     base =
-      from t in Transaction,
+      from(t in Transaction,
         order_by: [desc: t.booked_at, desc: t.inserted_at],
         limit: ^limit
+      )
 
     base =
       if q != "" do
         like = "%#{q}%"
-        from t in base, where: ilike(t.payer, ^like) or ilike(t.description, ^like)
+        from(t in base, where: ilike(t.payer, ^like) or ilike(t.description, ^like))
       else
         base
       end
 
-    case scope do
-      "business" -> from t in base, where: t.scope == "business"
-      "private" -> from t in base, where: t.scope == "private"
-      _ -> base
+    base =
+      case scope do
+        "business" -> from(t in base, where: t.scope == "business")
+        "private" -> from(t in base, where: t.scope == "private")
+        _ -> base
+      end
+
+    case account do
+      a when a in [nil, "", "all"] -> base
+      a -> from(t in base, where: t.account == ^a)
     end
   end
 
+  @doc "All accounts that ever had a line: {name, line_count, latest_date}."
+  def accounts do
+    Repo.all(
+      from(t in Transaction,
+        group_by: t.account,
+        order_by: [desc: count(t.id)],
+        select: {t.account, count(t.id), max(t.booked_at)}
+      )
+    )
+  end
+
   def delete_simulated! do
-    {n, _} = Repo.delete_all(from t in Transaction, where: t.source == "simulated")
+    {n, _} = Repo.delete_all(from(t in Transaction, where: t.source == "simulated"))
     n
   end
 
@@ -133,10 +283,17 @@ defmodule Munin.Money do
       |> Enum.reject(&(&1 == ""))
 
     case lines do
-      [] -> {[], []}
+      [] ->
+        {[], []}
+
       [header | data] ->
-        sep = if String.contains?(header, ";"), do: ";", else: if(String.contains?(header, "\t"), do: "\t", else: ",")
+        sep =
+          if String.contains?(header, ";"),
+            do: ";",
+            else: if(String.contains?(header, "\t"), do: "\t", else: ",")
+
         cols = map_columns(split_line(header, sep))
+
         {rows, errors} =
           data
           |> Enum.map(&split_line(&1, sep))
@@ -146,6 +303,7 @@ defmodule Munin.Money do
               {:error, reason} -> {nil, [reason | errs]}
             end
           end)
+
         {Enum.reject(rows, &is_nil/1), Enum.reverse(errors)}
     end
   end
@@ -161,8 +319,23 @@ defmodule Munin.Money do
     %{
       date: find_col(header, ["buchungstag", "wertstellung", "datum", "date"]),
       amount: find_col(header, ["betrag", "umsatz", "amount", "betrag (eur)"]),
-      payer: find_col(header, ["zahlungspflicht", "zahlungsbeteilig", "auftraggeber", "empfänger", "name", "payee"]),
-      description: find_col(header, ["verwendungszweck", "buchungstext", "beschreibung", "description", "vorgang"]),
+      payer:
+        find_col(header, [
+          "zahlungspflicht",
+          "zahlungsbeteilig",
+          "auftraggeber",
+          "empfänger",
+          "name",
+          "payee"
+        ]),
+      description:
+        find_col(header, [
+          "verwendungszweck",
+          "buchungstext",
+          "beschreibung",
+          "description",
+          "vorgang"
+        ]),
       iban: find_col(header, ["iban", "kontonummer"])
     }
   end
@@ -193,6 +366,7 @@ defmodule Munin.Money do
   defp get_cell(_cells, _idx), do: nil
 
   defp pick_date(_cells, nil), do: {:error, "no date column found"}
+
   defp pick_date(cells, idx) do
     case Enum.at(cells, idx) do
       nil -> {:error, "missing date"}
@@ -202,17 +376,25 @@ defmodule Munin.Money do
 
   defp parse_german_date(raw) do
     raw = String.trim(raw)
+
     case Date.from_iso8601(raw) do
       {:ok, d} ->
         {:ok, d}
+
       _ ->
         case String.split(raw, ".") do
           [d, m, y] when byte_size(y) >= 4 ->
-            case Date.new(String.to_integer(binary_part(y, 0, 4)), String.to_integer(m), String.to_integer(d)) do
+            case Date.new(
+                   String.to_integer(binary_part(y, 0, 4)),
+                   String.to_integer(m),
+                   String.to_integer(d)
+                 ) do
               {:ok, date} -> {:ok, date}
               _ -> {:error, "bad date: #{raw}"}
             end
-          _ -> {:error, "bad date: #{raw}"}
+
+          _ ->
+            {:error, "bad date: #{raw}"}
         end
     end
   rescue
@@ -220,6 +402,7 @@ defmodule Munin.Money do
   end
 
   defp pick_cents(_cells, nil), do: {:error, "no amount column found"}
+
   defp pick_cents(cells, idx) do
     case Enum.at(cells, idx) do
       nil -> {:error, "missing amount"}
@@ -230,6 +413,7 @@ defmodule Munin.Money do
   @doc "\"1.234,56-\" / \"-1234.56\" / \"1234,56 EUR\" → signed integer cents."
   def parse_euro(raw) do
     raw = raw |> String.replace(~r/[^\d,.\-]/, "") |> String.trim()
+
     {neg, body} =
       if String.contains?(raw, "-") do
         {true, String.replace(raw, "-", "")}
@@ -264,13 +448,17 @@ defmodule Munin.Money do
     else
       # Paying an invoice leaves a NEGATIVE bank line; match against the outflow.
       base =
-        from t in Transaction,
+        from(t in Transaction,
           where: t.amount_cents == ^(-cents) and is_nil(t.matched_document_id)
+        )
 
       base =
         case invoice_date(inv, doc) do
           %Date{} = d ->
-            from t in base, where: t.booked_at >= ^(Date.add(d, -3)) and t.booked_at <= ^(Date.add(d, 45))
+            from(t in base,
+              where: t.booked_at >= ^Date.add(d, -3) and t.booked_at <= ^Date.add(d, 45)
+            )
+
           _ ->
             base
         end
@@ -297,11 +485,14 @@ defmodule Munin.Money do
           {:ok, d} -> d
           _ -> nil
         end
-      _ -> nil
+
+      _ ->
+        nil
     end
   end
 
   defp vendor_tokens(nil), do: []
+
   defp vendor_tokens(v) do
     v
     |> String.downcase()
@@ -328,10 +519,16 @@ defmodule Munin.Money do
                 doc
                 |> note_jev!(%{"noul" => Float.round(n, 3), "matched" => true})
                 |> then(&confirm!(&1, line))
+
                 acc + 1
               else
                 # Jev doubts it: leave the pair in the /money/tx review queue.
-                note_jev!(doc, %{"noul" => Float.round(n, 3), "matched" => false, "line_id" => line.id})
+                note_jev!(doc, %{
+                  "noul" => Float.round(n, 3),
+                  "matched" => false,
+                  "line_id" => line.id
+                })
+
                 acc
               end
 
@@ -341,7 +538,8 @@ defmodule Munin.Money do
               acc + 1
           end
 
-        _ -> acc
+        _ ->
+          acc
       end
     end)
   end
@@ -386,68 +584,316 @@ defmodule Munin.Money do
     end
   end
 
+  # -------------------------------------------------------------- transfers
+
+  @doc """
+  Internal transfers between own accounts: same amount, opposite sign, ±4
+  days, neither side marked yet. Each inflow pairs at most once. These pairs
+  are income+spend double-counts today — one click retires both sides.
+  """
+  def transfer_candidates do
+    since = Date.add(Date.utc_today(), -400)
+
+    outs =
+      Repo.all(
+        from(t in Transaction,
+          where: t.amount_cents < 0 and t.is_transfer == false and t.booked_at >= ^since
+        )
+      )
+
+    ins =
+      Repo.all(
+        from(t in Transaction,
+          where: t.amount_cents > 0 and t.is_transfer == false and t.booked_at >= ^since
+        )
+      )
+
+    {pairs, _used} =
+      outs
+      |> Enum.sort_by(& &1.booked_at, {:desc, Date})
+      |> Enum.map_reduce(MapSet.new(), fn t, used ->
+        candidate =
+          ins
+          |> Enum.filter(fn i ->
+            i.amount_cents == -t.amount_cents and i.account != t.account and
+              abs(Date.diff(i.booked_at, t.booked_at)) <= 4 and not MapSet.member?(used, i.id)
+          end)
+          |> Enum.min_by(&abs(Date.diff(&1.booked_at, t.booked_at)), fn -> nil end)
+
+        case candidate do
+          nil -> {nil, used}
+          i -> {{t, i}, MapSet.put(used, i.id)}
+        end
+      end)
+
+    Enum.reject(pairs, &is_nil/1)
+  end
+
+  def mark_transfer!(out_id, in_id) do
+    {2, _} =
+      Repo.update_all(from(t in Transaction, where: t.id in ^[out_id, in_id]),
+        set: [is_transfer: true]
+      )
+
+    :ok
+  end
+
+  def unmark_transfer!(id) do
+    t = Repo.get!(Transaction, id)
+    Repo.update!(Ecto.Changeset.change(t, is_transfer: false))
+    :ok
+  end
+
   # --------------------------------------------------------------- cockpit
 
   def cockpit(months \\ 6) do
     since = Date.add(Date.utc_today(), -30 * months)
-    lines = Repo.all(from t in Transaction, where: t.booked_at >= ^since, order_by: [desc: t.booked_at])
+
+    lines =
+      Repo.all(
+        from(t in Transaction, where: t.booked_at >= ^since, order_by: [desc: t.booked_at])
+      )
+
+    spent = Enum.filter(lines, &(&1.amount_cents < 0 and not &1.is_transfer))
 
     monthly =
       lines
+      |> Enum.filter(&(not &1.is_transfer))
       |> Enum.group_by(fn t -> {t.booked_at.year, t.booked_at.month} end)
       |> Enum.map(fn {{y, m}, ls} ->
         {y, m,
          ls |> Enum.filter(&(&1.amount_cents > 0)) |> Enum.reduce(0, &(&1.amount_cents + &2)),
-         ls |> Enum.filter(&(&1.amount_cents < 0)) |> Enum.reduce(0, &(&1.amount_cents + &2)) |> abs()}
+         ls
+         |> Enum.filter(&(&1.amount_cents < 0))
+         |> Enum.reduce(0, &(&1.amount_cents + &2))
+         |> abs()}
       end)
       |> Enum.sort()
 
     {biz_spend, priv_spend} =
-      lines
-      |> Enum.filter(&(&1.amount_cents < 0))
+      spent
       |> Enum.reduce({0, 0}, fn t, {b, p} ->
-        if t.scope == "business", do: {b + abs(t.amount_cents), p}, else: {b, p + abs(t.amount_cents)}
+        if t.scope == "business",
+          do: {b + abs(t.amount_cents), p},
+          else: {b, p + abs(t.amount_cents)}
       end)
 
     top_payees =
-      lines
-      |> Enum.filter(&(&1.amount_cents < 0))
+      spent
       |> Enum.group_by(&normal_payee/1)
-      |> Enum.map(fn {payer, ls} -> {payer, length(ls), Enum.reduce(ls, 0, &(&1.amount_cents + &2))} end)
+      |> Enum.map(fn {payer, ls} ->
+        {payer, length(ls), Enum.reduce(ls, 0, &(&1.amount_cents + &2))}
+      end)
       |> Enum.sort_by(fn {_p, _c, sum} -> sum end)
       |> Enum.take(8)
+
+    today = Date.utc_today()
+
+    this_month =
+      Enum.filter(
+        lines,
+        &(&1.booked_at.year == today.year and &1.booked_at.month == today.month and
+            not &1.is_transfer)
+      )
+
+    vat = eur(latest_year())
 
     %{
       monthly: monthly,
       biz_spend: biz_spend,
       priv_spend: priv_spend,
       top_payees: top_payees,
-      subscriptions: subscriptions(lines),
-      missing_receipts: missing_receipts(lines),
-      total_lines: length(lines)
+      subscriptions:
+        subscriptions_for(Enum.filter(lines, &(&1.amount_cents < 0 and not &1.is_transfer))),
+      missing_receipts: missing_receipts(spent),
+      total_lines: length(lines),
+      month_in:
+        this_month
+        |> Enum.filter(&(&1.amount_cents > 0))
+        |> Enum.reduce(0, &(&1.amount_cents + &2)),
+      month_out:
+        this_month
+        |> Enum.filter(&(&1.amount_cents < 0))
+        |> Enum.reduce(0, &(&1.amount_cents + &2))
+        |> abs(),
+      vat_output: vat.output_vat,
+      vat_input: vat.input_vat,
+      docs_review: docs_to_review_count(),
+      deadlines: upcoming_deadlines()
     }
   end
 
   defp normal_payee(t), do: String.slice(t.payer || t.description || "?", 0, 26)
 
-  # Same payer, same amount, seen in >= 3 distinct months → probably a subscription.
-  defp subscriptions(lines) do
+  @doc """
+  The subscriptions radar over real lines: payees that recur monthly (3+
+  charges in distinct months) or yearly (2+ charges ~12 months apart), with
+  next-charge estimate and price-hike detection. `ignore_sub` rules hide
+  payees.
+  """
+  def subscription_detail do
+    since = Date.add(Date.utc_today(), -400)
+
+    Repo.all(
+      from(t in Transaction,
+        where: t.amount_cents < 0 and t.is_transfer == false and t.booked_at >= ^since
+      )
+    )
+    |> subscriptions_for()
+  end
+
+  defp subscriptions_for(lines) do
+    ignored = ignore_patterns()
+
     lines
-    |> Enum.filter(&(&1.amount_cents < 0))
-    |> Enum.group_by(&{normal_payee(&1), &1.amount_cents})
-    |> Enum.map(fn {{payer, cents}, ls} ->
-      months = ls |> Enum.map(&{&1.booked_at.year, &1.booked_at.month}) |> Enum.uniq() |> length()
-      if months >= 3, do: %{payer: payer, cents: cents, months: months, scope: hd(ls).scope}, else: nil
+    |> Enum.group_by(&sub_payee/1)
+    |> Enum.reject(fn {payee, _} ->
+      payee == "" or Enum.any?(ignored, &String.contains?(String.downcase(payee), &1))
     end)
+    |> Enum.map(&sub_summary/1)
     |> Enum.reject(&is_nil/1)
-    |> Enum.sort_by(& &1.cents)
+    |> Enum.sort_by(& &1.monthly_cents, :desc)
+  end
+
+  # Group key: payer with IBANs, long reference numbers and address noise
+  # stripped, so "REWE MARKT GMBH FILIALE 4477" groups with "REWE MARKT".
+  defp sub_payee(t) do
+    (t.payer || t.description || "")
+    |> String.upcase()
+    |> String.replace(~r/\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b/, " ")
+    |> String.replace(~r/\d{4,}/, " ")
+    |> String.split(~r/[^A-Z0-9&.]+/)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.take(3)
+    |> Enum.join(" ")
+  end
+
+  defp sub_summary({payee, ls}) do
+    ls = Enum.sort_by(ls, & &1.booked_at, {:desc, Date})
+    newest = hd(ls)
+    months = ls |> Enum.map(&{&1.booked_at.year, &1.booked_at.month}) |> Enum.uniq()
+    span = month_diff(List.last(ls).booked_at, newest.booked_at)
+
+    cond do
+      length(months) >= 3 ->
+        sub_card(newest, ls, payee, 1)
+
+      span >= 10 and length(ls) >= 2 ->
+        sub_card(newest, ls, payee, 12)
+
+      true ->
+        nil
+    end
+    |> case do
+      nil -> nil
+      s -> maybe_hike(s, ls)
+    end
+  end
+
+  defp sub_card(newest, ls, payee, interval) do
+    next = add_months(newest.booked_at, interval)
+    stale = Date.diff(Date.utc_today(), next) > 45
+
+    %{
+      payee: payee,
+      scope: newest.scope,
+      account: newest.account,
+      charge_cents: newest.amount_cents,
+      interval: interval,
+      monthly_cents:
+        if(interval == 12, do: div(newest.amount_cents, 12), else: newest.amount_cents),
+      yearly_cents: if(interval == 12, do: newest.amount_cents, else: newest.amount_cents * 12),
+      next_charge: if(stale, do: nil, else: next),
+      last_charge: newest.booked_at,
+      stale: stale,
+      charges: length(ls),
+      hike: nil
+    }
+  end
+
+  defp maybe_hike(s = %{charge_cents: newest_cents}, ls) do
+    mode =
+      ls
+      |> tl()
+      |> Enum.map(& &1.amount_cents)
+      |> Enum.frequencies()
+      |> Enum.max_by(fn {_cents, n} -> n end, fn -> nil end)
+      |> case do
+        nil -> nil
+        {cents, _n} -> cents
+      end
+
+    case mode do
+      m when is_integer(m) ->
+        m_abs = abs(m)
+        n_abs = abs(newest_cents)
+
+        if n_abs > m_abs and n_abs - m_abs >= 200 and n_abs * 100 >= m_abs * 105 do
+          %{s | hike: %{from: m, to: newest_cents}}
+        else
+          s
+        end
+
+      _ ->
+        s
+    end
+  end
+
+  defp month_diff(%Date{} = from, %Date{} = to) do
+    (to.year - from.year) * 12 + (to.month - from.month)
   end
 
   # Business spend without a matching document — receipts you should dig up.
   defp missing_receipts(lines) do
     lines
-    |> Enum.filter(&(&1.amount_cents < 0 and &1.scope == "business" and is_nil(&1.matched_document_id) and &1.category not in ["fees"]))
+    |> Enum.filter(
+      &(&1.amount_cents < 0 and &1.scope == "business" and is_nil(&1.matched_document_id) and
+          &1.category not in ["fees"])
+    )
     |> Enum.take(25)
+  end
+
+  defp docs_to_review_count do
+    Repo.one(
+      from(d in Document,
+        where:
+          d.read_status == "pending" or
+            fragment("coalesce(?->>'review_needed','false') = 'true'", d.meta) or
+            fragment("coalesce(?->'invoice'->>'review_needed','false') = 'true'", d.meta),
+        select: count(d.id)
+      )
+    )
+  end
+
+  # Payment due dates derived from documents: overdue (last 90 days) + the
+  # next 7 days. Warranty/notice dates stay on the reminders page.
+  defp upcoming_deadlines do
+    today = Date.utc_today()
+
+    from(d in Document, where: fragment("coalesce(?->'reminders'->>'due_date','') <> ''", d.meta))
+    |> Repo.all()
+    |> Enum.flat_map(fn d ->
+      case d.meta["reminders"]["due_date"] do
+        s when is_binary(s) and s != "" ->
+          case Date.from_iso8601(String.slice(s, 0, 10)) do
+            {:ok, date} -> [%{date: date, doc_id: d.id, title: d.title || d.filename}]
+            _ -> []
+          end
+
+        _ ->
+          []
+      end
+    end)
+    |> then(fn ds ->
+      %{
+        overdue: Enum.count(ds, &(&1.date < today and Date.diff(today, &1.date) <= 90)),
+        soon:
+          ds
+          |> Enum.filter(&(&1.date >= today and Date.diff(&1.date, today) <= 7))
+          |> Enum.sort_by(& &1.date)
+          |> Enum.take(5)
+      }
+    end)
   end
 
   # ------------------------------------------------------------------- tax
@@ -456,11 +902,16 @@ defmodule Munin.Money do
   def eur(year) do
     lines =
       Repo.all(
-        from t in Transaction,
-          where: t.scope == "business" and fragment("extract(year from ?)", t.booked_at) == ^year
+        from(t in Transaction,
+          where:
+            t.scope == "business" and t.is_transfer == false and
+              fragment("extract(year from ?)", t.booked_at) == ^year
+        )
       )
 
-    revenue = lines |> Enum.filter(&(&1.amount_cents > 0)) |> Enum.reduce(0, &(&1.amount_cents + &2))
+    revenue =
+      lines |> Enum.filter(&(&1.amount_cents > 0)) |> Enum.reduce(0, &(&1.amount_cents + &2))
+
     by_cat =
       lines
       |> Enum.filter(&(&1.amount_cents < 0))
@@ -494,7 +945,7 @@ defmodule Munin.Money do
   end
 
   def latest_year do
-    case Repo.one(from t in Transaction, select: max(t.booked_at)) do
+    case Repo.one(from(t in Transaction, select: max(t.booked_at))) do
       %Date{} = d -> d.year
       _ -> Date.utc_today().year
     end
@@ -512,9 +963,24 @@ defmodule Munin.Money do
     months =
       Enum.map(0..7, fn i ->
         d = add_months(start, i)
+
         base = [
-          row(d, 1, 420_000, "KUNDE NORDSEE DIGITAL GMBH", "Rechnung ZUUNA 2026-0#{i + 1} Projektarbeit", "business"),
-          row(d, 2, 185_000, "KUNDE SUEDWIND SOFTWARE AG", "Rechnung ZUUNA Beratungspauschale", "business"),
+          row(
+            d,
+            1,
+            420_000,
+            "KUNDE NORDSEE DIGITAL GMBH",
+            "Rechnung ZUUNA 2026-0#{i + 1} Projektarbeit",
+            "business"
+          ),
+          row(
+            d,
+            2,
+            185_000,
+            "KUNDE SUEDWIND SOFTWARE AG",
+            "Rechnung ZUUNA Beratungspauschale",
+            "business"
+          ),
           row(d, 3, -98_000, "VONOVIA SE", "Miete Wohnung", "private"),
           row(d, 4, -1_234, "OPENROUTER", "AI API Nutzung monatlich", "business"),
           row(d, 5, -4_890, "HETZNER ONLINE GMBH", "Server CX41 Rechnung", "business"),
@@ -524,21 +990,45 @@ defmodule Munin.Money do
           row(d, 9, -999, "SPOTIFY", "Premium Abo", "private"),
           row(d, 12, -89_00, "ALLRISE VERSICHERUNG AG", "Berufshaftpflicht Beitrag", "business")
         ]
+
         jitter =
           Enum.flat_map(1..4, fn k ->
             [
-              row(d, 10 + k, -(:rand.uniform(9_000) + 3_500), Enum.random(["EDEKA MARKT", "REWE MARKT", "LIDL"]), "LEBENSMITTEL", "private"),
-              row(d, 20 + k, -(:rand.uniform(4_000) + 2_000), Enum.random(["SHELL TANKSTELLE", "ARAL"]), "Kraftstoff", "private")
+              row(
+                d,
+                10 + k,
+                -(:rand.uniform(9_000) + 3_500),
+                Enum.random(["EDEKA MARKT", "REWE MARKT", "LIDL"]),
+                "LEBENSMITTEL",
+                "private"
+              ),
+              row(
+                d,
+                20 + k,
+                -(:rand.uniform(4_000) + 2_000),
+                Enum.random(["SHELL TANKSTELLE", "ARAL"]),
+                "Kraftstoff",
+                "private"
+              )
             ]
           end) ++
-          [
-            row(d, 15, -4_900, "DB VERTRIEB GMBH", "Deutschlandticket", "business"),
-            row(d, 16, -3_499, "APOTHEKE AM MARKT", "Rezept", "private")
-          ]
+            [
+              row(d, 15, -4_900, "DB VERTRIEB GMBH", "Deutschlandticket", "business"),
+              row(d, 16, -3_499, "APOTHEKE AM MARKT", "Rezept", "private")
+            ]
 
         Enum.map(base ++ jitter, fn {d2, day, cents, payer, desc, scope} ->
           day = min(day, Date.days_in_month(d2))
-          %{booked_at: Date.new!(d2.year, d2.month, day), amount_cents: cents, payer: payer, description: desc, iban: nil, external_id: nil, scope: scope}
+
+          %{
+            booked_at: Date.new!(d2.year, d2.month, day),
+            amount_cents: cents,
+            payer: payer,
+            description: desc,
+            iban: nil,
+            external_id: nil,
+            scope: scope
+          }
         end)
       end)
 
@@ -583,7 +1073,9 @@ defmodule Munin.Money do
         }
       ],
       fn inv ->
-        sha = :sha256 |> :crypto.hash("demo-invoice-" <> inv.number) |> Base.encode16(case: :lower)
+        sha =
+          :sha256 |> :crypto.hash("demo-invoice-" <> inv.number) |> Base.encode16(case: :lower)
+
         meta = %{
           "doc_type" => "invoice",
           "scope" => "business",
@@ -602,12 +1094,14 @@ defmodule Munin.Money do
               size: 12_345,
               source: "simulated",
               title: "#{inv.vendor} — #{inv.number}",
-              body_text: "Rechnung #{inv.number} von #{inv.vendor}, Gesamtbetrag #{inv.total_gross} EUR.",
+              body_text:
+                "Rechnung #{inv.number} von #{inv.vendor}, Gesamtbetrag #{inv.total_gross} EUR.",
               read_status: "done",
               meta: meta
             })
 
-          _ -> :ok
+          _ ->
+            :ok
         end
       end
     )

@@ -6,6 +6,7 @@ defmodule MuninWeb.TaxLive do
   later; this is the always-on picture.
   """
   use MuninWeb, :live_view
+  import MuninWeb.Format
   alias Munin.Money
 
   @impl true
@@ -46,14 +47,14 @@ defmodule MuninWeb.TaxLive do
         <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">EÜR picture (business lines, classified)</h2>
         <table class="w-full text-sm mb-2">
           <tbody>
-            <tr><td class="py-1">Revenue</td><td class="py-1 text-right font-semibold">{eur(@eur.revenue)}</td></tr>
+            <tr><td class="py-1">Revenue</td><td class="py-1 text-right font-semibold">{money(@eur.revenue)}</td></tr>
             <%= for {cat, cents} <- @eur.by_cat do %>
               <tr class="border-t border-zinc-100 dark:border-zinc-900">
-                <td class="py-1 text-zinc-500">{cat}</td><td class="py-1 text-right">{eur(cents)}</td>
+                <td class="py-1 text-zinc-500">{cat}</td><td class="py-1 text-right">{money(cents)}</td>
               </tr>
             <% end %>
-            <tr class="border-t border-zinc-200 dark:border-zinc-800"><td class="py-1 font-semibold">Expenses</td><td class="py-1 text-right font-semibold">{eur(-@eur.expenses)}</td></tr>
-            <tr class="border-t-2 border-zinc-300 dark:border-zinc-700"><td class="py-1 font-bold">Profit</td><td class="py-1 text-right font-bold">{eur(@eur.profit)}</td></tr>
+            <tr class="border-t border-zinc-200 dark:border-zinc-800"><td class="py-1 font-semibold">Expenses</td><td class="py-1 text-right font-semibold">{money(-@eur.expenses)}</td></tr>
+            <tr class="border-t-2 border-zinc-300 dark:border-zinc-700"><td class="py-1 font-bold">Profit</td><td class="py-1 text-right font-bold">{money(@eur.profit)}</td></tr>
           </tbody>
         </table>
       </div>
@@ -62,9 +63,9 @@ defmodule MuninWeb.TaxLive do
         <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">USt estimate worksheet</h2>
         <table class="w-full text-sm">
           <tbody>
-            <tr><td class="py-1">Output VAT (19% assumed on revenue)</td><td class="py-1 text-right">{eur(@eur.output_vat)}</td></tr>
-            <tr><td class="py-1 text-zinc-500">Input VAT (from matched invoices)</td><td class="py-1 text-right text-zinc-500">− {eur(@eur.input_vat)}</td></tr>
-            <tr class="border-t border-zinc-200 dark:border-zinc-800"><td class="py-1 font-semibold">Balance (estimate)</td><td class="py-1 text-right font-semibold">{eur(@eur.output_vat - @eur.input_vat)}</td></tr>
+            <tr><td class="py-1">Output VAT (19% assumed on revenue)</td><td class="py-1 text-right">{money(@eur.output_vat)}</td></tr>
+            <tr><td class="py-1 text-zinc-500">Input VAT (from matched invoices)</td><td class="py-1 text-right text-zinc-500">− {money(@eur.input_vat)}</td></tr>
+            <tr class="border-t border-zinc-200 dark:border-zinc-800"><td class="py-1 font-semibold">Balance (estimate)</td><td class="py-1 text-right font-semibold">{money(@eur.output_vat - @eur.input_vat)}</td></tr>
           </tbody>
         </table>
       </div>
@@ -75,7 +76,4 @@ defmodule MuninWeb.TaxLive do
     </div>
     """
   end
-
-  defp eur(cents) when cents < 0, do: "-" <> eur(-cents)
-  defp eur(cents), do: "#{:erlang.float_to_binary(cents / 100, decimals: 2)} €"
 end

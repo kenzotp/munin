@@ -5,6 +5,7 @@ defmodule MuninWeb.MoneyLive do
   real banks in P3).
   """
   use MuninWeb, :live_view
+  import MuninWeb.Format
   alias Munin.Workers.BankSyncWorker
 
   @impl true
@@ -26,12 +27,47 @@ defmodule MuninWeb.MoneyLive do
         <h1 class="text-2xl font-semibold">Money</h1>
         <div class="flex gap-3 text-sm">
           <.link href={~p"/money/tx"} class="text-blue-600 dark:text-blue-400 hover:underline">Transactions</.link>
+          <.link href={~p"/money/subs"} class="text-blue-600 dark:text-blue-400 hover:underline">Subscriptions</.link>
           <.link href={~p"/money/import"} class="text-blue-600 dark:text-blue-400 hover:underline">Import</.link>
           <.link href={~p"/tax"} class="text-blue-600 dark:text-blue-400 hover:underline">Tax</.link>
         </div>
       </div>
 
       <p class="text-xs text-zinc-400 mb-4">{@sync_status}</p>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500">This month</h2>
+          <p class="mt-2 text-sm"><span class="text-green-600 dark:text-green-400 font-semibold">+{money(@stats.month_in)}</span></p>
+          <p class="text-sm">{money(@stats.month_out)}</p>
+        </div>
+        <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500">USt estimate {Munin.Money.latest_year()}</h2>
+          <p class="mt-2 text-2xl font-semibold">{money(@stats.vat_output - @stats.vat_input)}</p>
+          <p class="text-xs text-zinc-400 mt-1">output {money(@stats.vat_output)} − input {money(@stats.vat_input)} · <.link href={~p"/tax"} class="hover:underline">EÜR</.link></p>
+        </div>
+        <.link navigate={~p"/documents"} class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 hover:border-blue-400 dark:hover:border-blue-700">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500">Documents to review</h2>
+          <p class={"mt-2 text-2xl font-semibold " <> if @stats.docs_review > 0, do: "text-amber-600 dark:text-amber-400", else: ""}>{@stats.docs_review}</p>
+          <p class="text-xs text-zinc-400 mt-1">pending or flagged</p>
+        </.link>
+        <.link navigate={~p"/reminders"} class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 hover:border-blue-400 dark:hover:border-blue-700">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500">Deadlines</h2>
+          <%= if @stats.deadlines.overdue > 0 do %>
+            <p class="mt-2 text-2xl font-semibold text-red-600 dark:text-red-400">{@stats.deadlines.overdue} overdue</p>
+          <% else %>
+            <p class="mt-2 text-2xl font-semibold">{length(@stats.deadlines.soon)}</p>
+          <% end %>
+          <p class="text-xs text-zinc-400 mt-1 truncate">
+            <%= case @stats.deadlines.soon do %>
+              <% [%{date: d, title: t} | _] -> %>
+                {MuninWeb.Format.date(d)} · {t}
+              <% _ -> %>
+                nothing due in 7 days
+            <% end %>
+          </p>
+        </.link>
+      </div>
 
       <%= if @simulated do %>
         <div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
@@ -82,7 +118,7 @@ defmodule MuninWeb.MoneyLive do
           <% else %>
             <ul class="space-y-1.5 text-sm">
               <%= for s <- @stats.subscriptions do %>
-                <li class="flex justify-between"><span>{s.payer} <span class="text-zinc-400">×{s.months}</span></span><span class="text-zinc-500">{money(-s.cents)}/mo</span></li>
+                <li class="flex justify-between"><span>{s.payee} <span class="text-zinc-400">×{s.charges}</span></span><span class="text-zinc-500">{money(-s.charge_cents)}{if s.interval == 12, do: "/yr", else: "/mo"}</span></li>
               <% end %>
             </ul>
           <% end %>
@@ -105,7 +141,7 @@ defmodule MuninWeb.MoneyLive do
         <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
           <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">Missing receipts <span class="chip-like text-zinc-400">(business spend, no document)</span></h2>
           <%= if @stats.missing_receipts == [] do %>
-            <p class="text-sm text-zinc-500">Nothing missing — every business euro has paper. 🏆</p>
+            <p class="text-sm text-zinc-500">Nothing missing — every business euro has paper.</p>
           <% else %>
             <ul class="space-y-1.5 text-sm">
               <%= for t <- @stats.missing_receipts do %>
@@ -117,11 +153,5 @@ defmodule MuninWeb.MoneyLive do
       </div>
     </div>
     """
-  end
-
-  defp money(cents) when cents < 0, do: "-" <> money(-cents)
-  defp money(cents) do
-    eur = :erlang.float_to_binary(cents / 100, decimals: 2)
-    "#{eur} €"
   end
 end

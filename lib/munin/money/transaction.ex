@@ -11,26 +11,43 @@ defmodule Munin.Money.Transaction do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
   schema "transactions" do
-    field :account, :string
-    field :external_id, :string
-    field :hash, :string
-    field :booked_at, :date
-    field :amount_cents, :integer
-    field :currency, :string, default: "EUR"
-    field :payer, :string
-    field :description, :string
-    field :iban, :string
-    field :category, :string
-    field :scope, :string
-    field :source, :string, default: "csv"
-    field :matched_document_id, :binary_id
+    field(:account, :string)
+    field(:external_id, :string)
+    field(:hash, :string)
+    field(:booked_at, :date)
+    field(:amount_cents, :integer)
+    field(:currency, :string, default: "EUR")
+    field(:payer, :string)
+    field(:description, :string)
+    field(:iban, :string)
+    field(:category, :string)
+    field(:scope, :string)
+    field(:source, :string, default: "csv")
+    field(:matched_document_id, :binary_id)
+    # Money moving between your own accounts: excluded from spend/income sums.
+    field(:is_transfer, :boolean, default: false)
 
     timestamps(type: :utc_datetime)
   end
 
   def changeset(transaction, attrs) do
     transaction
-    |> cast(attrs, [:account, :external_id, :hash, :booked_at, :amount_cents, :currency, :payer, :description, :iban, :category, :scope, :source, :matched_document_id])
+    |> cast(attrs, [
+      :account,
+      :external_id,
+      :hash,
+      :booked_at,
+      :amount_cents,
+      :currency,
+      :payer,
+      :description,
+      :iban,
+      :category,
+      :scope,
+      :source,
+      :matched_document_id,
+      :is_transfer
+    ])
     |> validate_required([:account, :hash, :booked_at, :amount_cents])
     |> unique_constraint([:account, :hash])
   end
