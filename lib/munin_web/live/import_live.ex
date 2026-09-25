@@ -58,27 +58,55 @@ defmodule MuninWeb.ImportLive do
   end
 
   def handle_event("fints", %{"days" => days}, socket) do
-    days =
-      case Integer.parse(days) do
-        {n, ""} when n in 1..720 -> n
-        _ -> 90
+    if socket.assigns.fints_busy do
+      # A fetch is already in flight in this LiveView; ignore the extra click.
+      {:noreply, socket}
+    else
+      days =
+        case Integer.parse(days) do
+          {n, ""} when n in 1..720 -> n
+          _ -> 90
+        end
+
+      start_date = Date.add(Date.utc_today(), -days)
+
+      {:noreply,
+       socket
+       |> assign(fints_busy: true)
+       |> start_async(:fints_fetch, fn -> Munin.Money.Fints.fetch(start_date) end)}
+    end
+  end
+
+  @impl true
+  def handle_async(:fints_fetch, {:ok, {:ok, result}}, socket) do
+    {:noreply,
+     socket
+     |> assign(fints_busy: false)
+     |> put_flash(:info, fints_flash_message(result))}
+  end
+
+  def handle_async(:fints_fetch, {:ok, {:error, reason}}, socket) do
+    {:noreply,
+     socket
+     |> assign(fints_busy: false)
+     |> put_flash(:error, "FinTS: " <> reason)}
+  end
+
+  def handle_async(:fints_fetch, {:exit, reason}, socket) do
+    {:noreply,
+     socket
+     |> assign(fints_busy: false)
+     |> put_flash(:error, "FinTS: fetch crashed (#{inspect(reason)}).")}
+  end
+
+  defp fints_flash_message(%{imported: imported, duplicates: dups, accounts: accounts}) do
+    suffix =
+      case accounts do
+        [_ | _] = accounts -> " across #{length(accounts)} account(s)."
+        [] -> "."
       end
 
-    socket = assign(socket, fints_busy: true)
-
-    case Munin.Money.Fints.fetch(Date.add(Date.utc_today(), -days)) do
-      {:ok, {imported, dups}} ->
-        {:noreply,
-         socket
-         |> assign(fints_busy: false)
-         |> put_flash(:info, "FinTS: #{imported} lines imported, #{dups} duplicates skipped.")}
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(fints_busy: false)
-         |> put_flash(:error, "FinTS: " <> reason)}
-    end
+    "FinTS: #{imported} lines imported, #{dups} duplicates skipped" <> suffix
   end
 
   defp reload_flag(socket), do: assign(socket, simulated: Money.simulated?())
@@ -102,15 +130,20 @@ defmodule MuninWeb.ImportLive do
         <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-3">Bank sync · FinTS</h2>
         <%= if @fints_configured do %>
           <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-            Read-only statement fetch from your bank (Sparkasse). First fetch may need a TAN approval in your banking app — the interactive flow is the next piece.
+            Read-only statement fetch from your bank (Sparkasse). Approval happens in your banking app (S-pushTAN) — no TAN is ever typed here.
           </p>
+          <%= if @fints_busy do %>
+            <p class="text-sm text-blue-600 dark:text-blue-400 mb-3">
+              Waiting for approval — open the S-pushTAN app and approve the push now.
+            </p>
+          <% end %>
           <form phx-submit="fints" class="flex items-center gap-2">
-            <input type="number" name="days" min="1" max="720" value={@fints_days}
+            <input type="number" name="days" min="1" max="720" value={@fints_days} disabled={@fints_busy}
               class="w-24 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm" />
             <span class="text-sm text-zinc-500">days back</span>
             <button type="submit" disabled={@fints_busy}
               class="rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold px-4 py-2 text-sm">
-              Fetch statements
+              <%= if @fints_busy, do: "Waiting for approval…", else: "Fetch statements" %>
             </button>
           </form>
         <% else %>
