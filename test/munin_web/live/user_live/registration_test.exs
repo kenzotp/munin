@@ -1,8 +1,19 @@
 defmodule MuninWeb.UserLive.RegistrationTest do
-  use MuninWeb.ConnCase, async: true
+  # Toggles the :registration_open application env below, so this module
+  # cannot run concurrently with other tests touching the same key.
+  use MuninWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
   import Munin.AccountsFixtures
+
+  # Registration is closed by default (see MuninWeb.UserAuth.registration_open?/0).
+  # These tests exercise the open case; restore whatever was configured before.
+  setup do
+    previous = Application.get_env(:munin, :registration_open)
+    Application.put_env(:munin, :registration_open, true)
+    on_exit(fn -> Application.put_env(:munin, :registration_open, previous) end)
+    :ok
+  end
 
   describe "Registration page" do
     test "renders registration page", %{conn: conn} do
@@ -77,6 +88,23 @@ defmodule MuninWeb.UserLive.RegistrationTest do
         |> follow_redirect(conn, ~p"/users/log-in")
 
       assert login_html =~ "Log in"
+    end
+  end
+
+  describe "registration closed" do
+    setup do
+      Application.put_env(:munin, :registration_open, false)
+      :ok
+    end
+
+    test "redirects to the login page with a flash", %{conn: conn} do
+      {:ok, redirected_conn} =
+        conn
+        |> live(~p"/users/register")
+        |> follow_redirect(conn, ~p"/users/log-in")
+
+      assert Phoenix.Flash.get(redirected_conn.assigns.flash, :error) ==
+               "Registration is closed."
     end
   end
 end

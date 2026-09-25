@@ -49,9 +49,16 @@ defmodule MuninWeb.UserLive.Registration do
   end
 
   def mount(_params, _session, socket) do
-    changeset = Accounts.change_user_email(%User{}, %{}, validate_unique: false)
+    if MuninWeb.UserAuth.registration_open?() do
+      changeset = Accounts.change_user_email(%User{}, %{}, validate_unique: false)
 
-    {:ok, assign_form(socket, changeset), temporary_assigns: [form: nil]}
+      {:ok, assign_form(socket, changeset), temporary_assigns: [form: nil]}
+    else
+      {:ok,
+       socket
+       |> put_flash(:error, "Registration is closed.")
+       |> redirect(to: ~p"/users/log-in")}
+    end
   end
 
   @impl true

@@ -1,8 +1,21 @@
 defmodule MuninWeb.UserLive.LoginTest do
-  use MuninWeb.ConnCase, async: true
+  # Toggles the :registration_open application env below (the "Sign up" link
+  # only renders when registration is open), so this module cannot run
+  # concurrently with other tests touching the same key.
+  use MuninWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
   import Munin.AccountsFixtures
+
+  # Registration is closed by default (see MuninWeb.UserAuth.registration_open?/0),
+  # which would hide the "Sign up" link these tests exercise. Open it here and
+  # restore whatever was configured before.
+  setup do
+    previous = Application.get_env(:munin, :registration_open)
+    Application.put_env(:munin, :registration_open, true)
+    on_exit(fn -> Application.put_env(:munin, :registration_open, previous) end)
+    :ok
+  end
 
   describe "login page" do
     test "renders login page", %{conn: conn} do
