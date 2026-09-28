@@ -17,3 +17,6 @@ priv/static/cache/
 cover/
 test/tmp/
 .elixir_ls/
+
+# env backups hold bank credentials
+.env.bak*
