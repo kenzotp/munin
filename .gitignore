@@ -8,6 +8,7 @@ __pycache__/
 venv/
 data/
 docs/local/
+logs/
 
 # Elixir / Phoenix
 deps/

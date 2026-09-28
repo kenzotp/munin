@@ -29,9 +29,13 @@ defmodule Munin.Jev do
     if enabled?() do
       with :ok <- guard_url(),
            {:ok, 200, body} <- post(state(doc, line)),
-           {:ok, decoded} <- Jason.decode(body),
-           n when is_number(n) <- get_in(decoded, ["answers", "matches", "noul"]) do
-        {:ok, n / 1.0}
+           {:ok, decoded} <- Jason.decode(body) do
+        log_usage(decoded)
+
+        case get_in(decoded, ["answers", "matches", "noul"]) do
+          n when is_number(n) -> {:ok, n / 1.0}
+          other -> {:error, {:bad_response, other}}
+        end
       else
         {:error, reason} -> {:error, reason}
         other -> {:error, {:bad_response, other}}
@@ -125,6 +129,29 @@ defmodule Munin.Jev do
       {:error, reason} -> {:error, {:httpc, reason}}
     end
   end
+
+  # Per-call token usage, one JSONL line. Never raises, never logs state/answers.
+  defp log_usage(%{"usage" => usage} = decoded) when is_map(usage) do
+    line =
+      Jason.encode!(%{
+        ts: DateTime.utc_now() |> DateTime.to_iso8601(),
+        app: "munin",
+        model: decoded["model"] || model(),
+        input_tokens: usage["input_tokens"] || 0,
+        output_tokens: usage["output_tokens"] || 0
+      }) <> "\n"
+
+    path = usage_log_path()
+    File.mkdir_p(Path.dirname(path))
+    File.write(path, line, [:append])
+    File.chmod(path, 0o666)
+  rescue
+    _ -> :ok
+  end
+
+  defp log_usage(_), do: :ok
+
+  defp usage_log_path, do: System.get_env("JEV_USAGE_LOG", "/app/logs/jev-usage.jsonl")
 
   defp ssl_options do
     [
