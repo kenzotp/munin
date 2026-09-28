@@ -15,8 +15,10 @@ services:
       PORT: 4000
       PHX_SERVER: "true"
       PHX_HOST: munin.nied.cc
+      JEV_USAGE_LOG: /app/logs/jev-usage.jsonl
     volumes:
       - /mnt/munin-vault:/vault
+      - ./logs:/app/logs
     command: sh -c "/app/bin/munin eval \"Munin.Release.migrate\" && /app/bin/server"
     networks:
       - default
